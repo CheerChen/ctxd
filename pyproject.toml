@@ -1,0 +1,30 @@
+[project]
+name = "ctxd"
+version = "0.2.0"
+description = "Unified context dumper for GitHub PR, Slack thread, Confluence pages, and Jira issues"
+authors = [{ name = "cheerchen", email = "cheerchen37@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.1.0",
+  "requests>=2.32.0",
+  "beautifulsoup4>=4.12.0",
+  "markdownify>=1.2.0",
+  "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+ctxd = "ctxd.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.13,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "ctxd"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
