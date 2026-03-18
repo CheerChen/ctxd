@@ -11,7 +11,7 @@ class Ctxd < Formula
     libexec.install Dir["*"]
     (bin/"ctxd").write <<~EOS
       #!/bin/bash
-      exec "#{Formula["uv"].opt_bin}/uv" run --frozen --project "#{libexec}" ctxd "$@"
+      exec "#{Formula["uv"].opt_bin}/uv" run --quiet --frozen --project "#{libexec}" ctxd "$@"
     EOS
   end
 
