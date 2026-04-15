@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 from urllib.parse import quote
 
 import markdownify
@@ -142,15 +142,103 @@ def convert_plantuml_macros(html: str, image_map: dict[str, str]) -> str:
     return re.sub(pattern, replace_plantuml, html, flags=re.DOTALL)
 
 
+def comments_to_markdown(
+    comments: list[dict],
+    resolve_user: Callable[[str], str] | None = None,
+    marker_line_map: dict[str, int] | None = None,
+    depth: int = 0,
+) -> str:
+    lines: list[str] = []
+    indent = "  " * depth
+    prev_selection: str | None = None
+    for comment in comments:
+        version = comment.get("version", {})
+        author_id = version.get("authorId", "unknown")
+        created_at = version.get("createdAt", comment.get("createdAt", ""))
+
+        author_name = resolve_user(author_id) if resolve_user else author_id
+
+        # Inline comment: show annotated text as blockquote, with separator between different selections
+        selection = comment.get("properties", {}).get("inline-original-selection", "")
+        marker_ref = comment.get("properties", {}).get("inline-marker-ref", "")
+        if selection and depth == 0:
+            if prev_selection is not None:
+                lines.append("---")
+                lines.append("")
+            line_num = marker_line_map.get(marker_ref) if marker_line_map else None
+            line_info = f" (Line {line_num})" if line_num else ""
+            lines.append(f"{indent}> {selection}{line_info}")
+            lines.append("")
+            prev_selection = selection
+
+        body_html = comment.get("body", {}).get("storage", {}).get("value", "")
+        body_md = ""
+        if body_html:
+            body_md = markdownify.markdownify(body_html, heading_style="ATX", strip=["script", "style"]).strip()
+
+        header = f"{indent}**{author_name}** ({created_at})" if created_at else f"{indent}**{author_name}**"
+
+        lines.append(header)
+        if body_md:
+            for line in body_md.split("\n"):
+                lines.append(f"{indent}{line}")
+        lines.append("")
+
+        children = comment.get("_children", [])
+        if children:
+            lines.append(comments_to_markdown(children, resolve_user=resolve_user, depth=depth + 1))
+
+    return "\n".join(lines)
+
+
+_MARKER_PREFIX = "\u200bMRK"
+_MARKER_SUFFIX = "MRK\u200b"
+
+
+def _extract_marker_lines(html: str) -> Tuple[str, list[str]]:
+    marker_refs: list[str] = []
+    pattern = r'<ac:inline-comment-marker[^>]*ac:ref="([^"]+)"[^>]*>(.*?)</ac:inline-comment-marker>'
+
+    # Repeatedly process innermost markers to handle nesting
+    while re.search(pattern, html, flags=re.DOTALL):
+        def replace_marker(match: re.Match[str]) -> str:
+            ref = match.group(1)
+            content = match.group(2)
+            marker_refs.append(ref)
+            return f"{_MARKER_PREFIX}{ref}{_MARKER_SUFFIX}{content}"
+
+        html = re.sub(pattern, replace_marker, html, flags=re.DOTALL)
+
+    return html, marker_refs
+
+
+def _resolve_marker_lines(markdown: str, marker_refs: list[str]) -> Tuple[str, dict[str, int]]:
+    marker_line_map: dict[str, int] = {}
+    for i, line in enumerate(markdown.split("\n"), start=1):
+        for ref in marker_refs:
+            tag = f"{_MARKER_PREFIX}{ref}{_MARKER_SUFFIX}"
+            if tag in line:
+                if ref not in marker_line_map:
+                    marker_line_map[ref] = i
+
+    cleaned = markdown
+    for ref in marker_refs:
+        tag = f"{_MARKER_PREFIX}{ref}{_MARKER_SUFFIX}"
+        cleaned = cleaned.replace(tag, "")
+
+    return cleaned, marker_line_map
+
+
 def html_to_markdown(
     html: str,
     image_map: dict[str, str] | None = None,
     base_url: str | None = None,
-) -> Tuple[str, List[str]]:
+) -> Tuple[str, List[str], dict[str, int]]:
     if image_map is None:
         image_map = {}
 
     image_filenames = extract_confluence_images(html)
+    html, marker_refs = _extract_marker_lines(html)
     html = convert_internal_links(html, base_url=base_url)
     html = convert_confluence_images(html, image_map)
     html = convert_drawio_macros(html, image_map)
@@ -158,4 +246,5 @@ def html_to_markdown(
     html = convert_plantuml_macros(html, image_map)
 
     markdown = markdownify.markdownify(html, heading_style="ATX", bullets="*", strip=["script", "style"])
-    return markdown, image_filenames
+    markdown, marker_line_map = _resolve_marker_lines(markdown, marker_refs)
+    return markdown, image_filenames, marker_line_map

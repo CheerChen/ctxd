@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ctxd.auth import ensure_confluence_auth
 from ctxd.confluence.api_client import ConfluenceClient
-from ctxd.confluence.converter import extract_confluence_images, html_to_markdown
+from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import parse_confluence_url
 from ctxd.dumpers.base import BaseDumper
 
@@ -69,8 +69,16 @@ class ConfluenceDumper(BaseDumper):
             page = self.client.get_page(page_id)
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
-        markdown, _ = html_to_markdown(html_content or "", image_map={}, base_url=self.client.base_url)
-        return f"# {title}\n\n{markdown}"
+        markdown, _, marker_line_map = html_to_markdown(html_content or "", image_map={}, base_url=self.client.base_url)
+        # Title header "# {title}\n\n" adds 2 lines offset
+        marker_line_map = {ref: line + 2 for ref, line in marker_line_map.items()}
+        result = f"# {title}\n\n{markdown}"
+
+        comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+        if comments_md:
+            result += f"\n\n---\n\n## Comments\n\n{comments_md}"
+
+        return result
 
     def dump(self) -> None:
         self.validate_auth()
@@ -148,8 +156,13 @@ class ConfluenceDumper(BaseDumper):
                 )
 
             base_url = self.client.base_url if self.client else None
-            markdown, _ = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
+            markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
+            marker_line_map = {ref: line + 2 for ref, line in marker_line_map.items()}
             markdown = f"# {title}\n\n{markdown}"
+
+            comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+            if comments_md:
+                markdown += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
             (page_dir / "README.md").write_text(markdown, encoding="utf-8")
             self.log(f"  ✓ Saved: {page_dir / 'README.md'}")
@@ -157,6 +170,37 @@ class ConfluenceDumper(BaseDumper):
         except Exception as exc:
             self.log(f"  ✗ Failed to export page {page_data.get('id')}: {exc}")
             return False
+
+    def _fetch_and_format_comments(self, page_id: str, marker_line_map: dict[str, int] | None = None) -> str:
+        if self.client is None:
+            return ""
+        resolve_user = self.client.get_user_display_name
+        parts: list[str] = []
+        try:
+            inline_comments = self.client.get_inline_comments(page_id)
+            if inline_comments:
+                for comment in inline_comments:
+                    children = self.client.get_comment_children(comment["id"], comment_type="inline")
+                    if children:
+                        comment["_children"] = children
+                parts.append("### Inline Comments\n")
+                parts.append(comments_to_markdown(inline_comments, resolve_user=resolve_user, marker_line_map=marker_line_map))
+        except Exception as exc:
+            self.log(f"    ⚠ Failed to fetch inline comments for page {page_id}: {exc}")
+
+        try:
+            footer_comments = self.client.get_footer_comments(page_id)
+            if footer_comments:
+                for comment in footer_comments:
+                    children = self.client.get_comment_children(comment["id"], comment_type="footer")
+                    if children:
+                        comment["_children"] = children
+                parts.append("### Footer Comments\n")
+                parts.append(comments_to_markdown(footer_comments, resolve_user=resolve_user))
+        except Exception as exc:
+            self.log(f"    ⚠ Failed to fetch footer comments for page {page_id}: {exc}")
+
+        return "\n".join(parts)
 
     def _download_page_images(
         self,

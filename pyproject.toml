@@ -1,6 +1,6 @@
 [project]
 name = "ctxd"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unified context dumper for GitHub PR, Slack thread, Confluence pages, and Jira issues"
 authors = [{ name = "cheerchen", email = "cheerchen37@gmail.com" }]
 requires-python = ">=3.10"
