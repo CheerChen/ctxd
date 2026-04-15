@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1]
+
+* **Confluence comments support** : Export inline comments (page annotations) and footer comments alongside page content. Comments are appended as a `## Comments` section with reply threading preserved.
+* **Comment author resolution** : Resolve Confluence account IDs to display names via REST API (with caching).
+* **Inline comment line numbers** : Each inline comment shows the annotated text as a blockquote with the corresponding line number in the exported Markdown (e.g. `> selection text (Line 14)`), distinguishing comments on repeated text.
+* **Comment block separators** : Different annotation threads are separated by `---` for readability.
+
 ## [0.2.0]
 
 * **Unified release** : Consolidated `pr-dump`, `confluence-dump`, and `slack-thread-dump` into ctxd. All three legacy projects are now archived.
