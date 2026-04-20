@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0]
+
+### Breaking
+* **Confluence defaults flipped** : `--recursive` and `--include-images` now default to `false`. `ctxd <confluence-url>` now prints the single page to stdout out-of-the-box; pass `-r` / `-i` (with `-o <dir>`) to opt into the full recursive + images export. Scripts that relied on the old tree-export default must now pass `-r -i` explicitly.
+* **GitHub PR bot filter flipped** : bot-authored reviews, inline comments, and timeline comments are now kept by default (previously silently dropped). KTC-style workflows where `pr-agent`, `devin-ai-integration`, `coderabbitai`, etc. are real reviewers now surface correctly. Pass `--no-bots` to restore the old filtering behavior.
+
+### Added
+* **Auto-quiet on piped stderr** : when stderr is not a TTY (e.g. redirected or consumed by another process) and neither `-q` nor `-v` was passed explicitly, progress logs are silenced automatically — no more noisy output when piping into other tools.
+* **GitHub PR review section** : new top-level `## Reviews` block listing each review with `@author`, `**STATE**` (APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED), submission timestamp, and body if any. Empty-body reviews (e.g. bare approvals) are now preserved — the state itself is the signal.
+* **GitHub PR inline comment enrichment** : inline review comments now render as `@user [SIDE] L{start}-{end} (timestamp):` with diff side (LEFT/RIGHT) and multi-line ranges, under a top-level `## Inline Review Comments` grouped by file.
+* **GitHub PR timestamps** : all comments and reviews now include the upstream ISO-8601 timestamp (with timezone) from the GitHub API.
+
+### Changed
+* **Friendlier Confluence flag errors** : using `-r` / `-i` / `--all-attachments` without `-o` now prints the exact command to copy-paste (with and without `-o <dir>`), instead of a generic hint.
+* **GitHub PR output structure** : sections reordered to overview-first — `## Reviews` → `## Inline Review Comments` → `## Timeline Comments` → `## Git Diff`. Section headings promoted from `### ` under `## All Comments` to top-level `## `.
+
+### Fixed
+* **GitHub PR diff works from any cwd** : diff generation previously shelled out to local `git diff` / `git fetch`, which silently returned empty whenever the cwd wasn't the target repo's clone (e.g. running ctxd from `/tmp`, from a sibling repo, or when the PR branch hadn't been fetched). All modes now use GitHub API: `gh pr diff` for `full`/`compact`, `/repos/{o}/{r}/pulls/{n}/files` for `stat`. No local clone required.
+
 ## [0.2.1]
 
 * **Confluence comments support** : Export inline comments (page annotations) and footer comments alongside page content. Comments are appended as a `## Comments` section with reply threading preserved.
