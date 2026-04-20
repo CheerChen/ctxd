@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import click
+from click.core import ParameterSource
 
 from ctxd import __version__
 from ctxd.auth import AuthError
@@ -21,14 +23,20 @@ from ctxd.router import Source, detect
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logs to stderr")
 @click.option("-d", "--diff-mode", type=click.Choice(["full", "compact", "stat"]), default="compact", show_default=True)
 @click.option("--clean-body/--no-clean-body", default=True, show_default=True)
+@click.option("--no-bots", is_flag=True, default=False,
+              help="GitHub PR: drop bot-authored reviews/comments (default: keep all bots)")
 @click.option("--download-files", is_flag=True, default=False)
 @click.option("--raw", is_flag=True, default=False, help="Keep original Slack mrkdwn")
-@click.option("-r", "--recursive/--no-recursive", default=True, show_default=True)
-@click.option("-i", "--include-images/--no-include-images", default=True, show_default=True)
+@click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
+              help="Confluence: also export child pages (requires -o)")
+@click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
+              help="Confluence: download referenced images (requires -o)")
 @click.option("--all-attachments", is_flag=True, default=False)
 @click.option("--debug", is_flag=True, default=False)
 @click.version_option(__version__, prog_name="ctxd")
+@click.pass_context
 def main(
+    ctx: click.Context,
     url_or_cmd: str | None,
     shell: str | None,
     output: Path | None,
@@ -37,6 +45,7 @@ def main(
     verbose: bool,
     diff_mode: str,
     clean_body: bool,
+    no_bots: bool,
     download_files: bool,
     raw: bool,
     recursive: bool,
@@ -66,10 +75,20 @@ def main(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    # Auto-quiet when stderr is being piped/redirected (not a TTY), unless the
+    # user explicitly asked for quiet or verbose.
+    if (
+        not verbose
+        and ctx.get_parameter_source("quiet") == ParameterSource.DEFAULT
+        and not _stderr_is_tty()
+    ):
+        quiet = True
+
     output_str = str(output) if output else None
 
     if source is Source.CONFLUENCE:
-        _validate_confluence_stdout_rules(
+        _validate_confluence_flags(
+            url=url,
             output=output,
             recursive=recursive,
             include_images=include_images,
@@ -95,6 +114,7 @@ def main(
             verbose=verbose,
             diff_mode=diff_mode,
             clean_body=clean_body,
+            no_bots=no_bots,
         )
     elif source is Source.JIRA:
         dumper = JiraDumper(
@@ -135,6 +155,10 @@ def main(
         raise click.ClickException(str(exc)) from exc
 
 
+def _stderr_is_tty() -> bool:
+    return sys.stderr.isatty()
+
+
 def _emit_shell_alias(shell: str | None) -> None:
     if shell is None:
         raise click.UsageError("Missing shell. Use: ctxd init <zsh|bash|fish>")
@@ -153,7 +177,8 @@ def _emit_shell_alias(shell: str | None) -> None:
     click.echo("alias ctx ctxd")
 
 
-def _validate_confluence_stdout_rules(
+def _validate_confluence_flags(
+    url: str,
     output: Path | None,
     recursive: bool,
     include_images: bool,
@@ -162,8 +187,19 @@ def _validate_confluence_stdout_rules(
     if output is not None:
         return
 
-    if recursive or include_images or all_attachments:
-        raise click.UsageError(
-            "Confluence recursive/image export requires -o <dir>. "
-            "For stdout, use --no-recursive --no-include-images."
-        )
+    used: list[str] = []
+    if recursive:
+        used.append("-r")
+    if include_images:
+        used.append("-i")
+    if all_attachments:
+        used.append("--all-attachments")
+    if not used:
+        return
+
+    flags = " ".join(used)
+    raise click.UsageError(
+        f"{flags} requires -o <dir> (Confluence writes a directory tree / images to disk).\n"
+        f"Try:   ctxd {url} {flags} -o <dir>\n"
+        f"Or omit the flags for single-page stdout: ctxd {url}"
+    )

@@ -22,10 +22,12 @@ class GitHubPRDumper(BaseDumper):
         verbose: bool = False,
         diff_mode: str = "compact",
         clean_body: bool = True,
+        no_bots: bool = False,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
         self.diff_mode = diff_mode
         self.clean_body = clean_body
+        self.no_bots = no_bots
         self.owner = ""
         self.repo = ""
         self.pr_number = ""
@@ -48,7 +50,7 @@ class GitHubPRDumper(BaseDumper):
                 "--repo",
                 f"{self.owner}/{self.repo}",
                 "--json",
-                "title,body,baseRefName,headRefName,headRefOid",
+                "title,body",
             ]
         )
 
@@ -59,12 +61,7 @@ class GitHubPRDumper(BaseDumper):
         timeline_comments = self._fetch_issue_comments()
         diff_comments = self._fetch_diff_comments()
         reviews = self._fetch_reviews()
-
-        base_branch = pr_info.get("baseRefName", "")
-        head_branch = pr_info.get("headRefName", "")
-        head_sha = pr_info.get("headRefOid", "")
-
-        diff_content = self._generate_diff(base_branch, head_branch, head_sha)
+        diff_content = self._generate_diff()
 
         return {
             "number": self.pr_number,
@@ -88,30 +85,35 @@ class GitHubPRDumper(BaseDumper):
                 "",
                 metadata,
                 "",
-                "## All Comments",
-                "",
             ]
 
-            if raw["timeline_comments"]:
-                lines.append("### Timeline Comments")
-                lines.append("")
-                lines.extend(raw["timeline_comments"])
-                lines.append("")
+            if raw["reviews"]:
+                lines.extend(["## Reviews", ""])
+                for review in raw["reviews"]:
+                    lines.append(self._md_review_line(review))
+                    if review["body"]:
+                        for body_line in review["body"].splitlines():
+                            lines.append(f"  {body_line}")
+                    lines.append("")
 
             if raw["diff_comments"]:
-                lines.append("### Code Review Comments")
-                lines.append("")
-                for path, comments in raw["diff_comments"].items():
-                    lines.append(f"#### `{path}`")
+                lines.extend(["## Inline Review Comments", ""])
+                for path, entries in raw["diff_comments"].items():
+                    lines.append(f"### `{path}`")
                     lines.append("")
-                    lines.extend(comments)
-                    lines.append("")
+                    for entry in entries:
+                        lines.append(self._md_inline_header(entry))
+                        for body_line in entry["body"].splitlines():
+                            lines.append(f"  {body_line}")
+                        lines.append("")
 
-            if raw["reviews"]:
-                lines.append("### Review Summaries")
-                lines.append("")
-                lines.extend(raw["reviews"])
-                lines.append("")
+            if raw["timeline_comments"]:
+                lines.extend(["## Timeline Comments", ""])
+                for comment in raw["timeline_comments"]:
+                    lines.append(self._md_timeline_line(comment))
+                    for body_line in comment["body"].splitlines():
+                        lines.append(f"  {body_line}")
+                    lines.append("")
 
             lines.extend([
                 "## Git Diff",
@@ -131,24 +133,68 @@ class GitHubPRDumper(BaseDumper):
             "--- METADATA ---",
             metadata,
             "",
-            "--- ALL COMMENTS ---",
         ]
 
-        if raw["timeline_comments"]:
-            lines.extend(["", "## Timeline Comments ##", *raw["timeline_comments"]])
+        if raw["reviews"]:
+            lines.extend(["--- REVIEWS ---"])
+            for review in raw["reviews"]:
+                lines.append(self._md_review_line(review))
+                if review["body"]:
+                    for body_line in review["body"].splitlines():
+                        lines.append(f"  {body_line}")
+            lines.append("")
 
         if raw["diff_comments"]:
-            lines.extend(["", "## Code Review Comments ##"])
-            for path, comments in raw["diff_comments"].items():
+            lines.extend(["--- INLINE REVIEW COMMENTS ---"])
+            for path, entries in raw["diff_comments"].items():
                 lines.append(f"[{path}]")
-                lines.extend(comments)
+                for entry in entries:
+                    lines.append(self._md_inline_header(entry))
+                    for body_line in entry["body"].splitlines():
+                        lines.append(f"  {body_line}")
                 lines.append("")
 
-        if raw["reviews"]:
-            lines.extend(["", "## Review Summaries ##", *raw["reviews"]])
+        if raw["timeline_comments"]:
+            lines.extend(["--- TIMELINE COMMENTS ---"])
+            for comment in raw["timeline_comments"]:
+                lines.append(self._md_timeline_line(comment))
+                for body_line in comment["body"].splitlines():
+                    lines.append(f"  {body_line}")
+            lines.append("")
 
-        lines.extend(["", "--- GIT DIFF ---", raw["diff_content"], ""])
+        lines.extend(["--- GIT DIFF ---", raw["diff_content"], ""])
         return "\n".join(lines)
+
+    @staticmethod
+    def _author_tag(entry: dict) -> str:
+        login = entry.get("login", "unknown")
+        if entry.get("is_bot") and not login.endswith("[bot]"):
+            return f"@{login}[bot]"
+        return f"@{login}"
+
+    def _md_review_line(self, review: dict) -> str:
+        ts = review.get("submitted_at", "")
+        ts_tag = f" ({ts})" if ts else ""
+        return f"- {self._author_tag(review)} — **{review['state']}**{ts_tag}"
+
+    def _md_timeline_line(self, comment: dict) -> str:
+        ts = comment.get("created_at", "")
+        ts_tag = f" ({ts})" if ts else ""
+        return f"- {self._author_tag(comment)}{ts_tag}:"
+
+    def _md_inline_header(self, entry: dict) -> str:
+        side = entry.get("side") or "RIGHT"
+        start_line = entry.get("start_line")
+        line = entry.get("line")
+        if start_line and line and start_line != line:
+            line_tag = f"L{start_line}-{line}"
+        elif line:
+            line_tag = f"L{line}"
+        else:
+            line_tag = "L?"
+        ts = entry.get("created_at", "")
+        ts_tag = f" ({ts})" if ts else ""
+        return f"- {self._author_tag(entry)} [{side}] {line_tag}{ts_tag}:"
 
     def _gh_json(self, args: list[str]) -> dict:
         cmd = ["gh", *args]
@@ -177,131 +223,168 @@ class GitHubPRDumper(BaseDumper):
                     flattened.append(page)
         return flattened
 
-    def _fetch_issue_comments(self) -> list[str]:
+    def _is_bot(self, user: dict) -> bool:
+        return (user or {}).get("type") == "Bot"
+
+    def _fetch_issue_comments(self) -> list[dict]:
         comments = self._gh_api_paginate(f"/repos/{self.owner}/{self.repo}/issues/{self.pr_number}/comments")
-        rendered: list[str] = []
+        result: list[dict] = []
         for comment in comments:
             body = (comment.get("body") or "").strip()
-            user = comment.get("user", {})
-            if not body or user.get("type") == "Bot":
+            if not body:
                 continue
-            login = user.get("login", "unknown")
-            indented = body.replace("\n", "\n  ")
-            rendered.append(f"- @{login}: {indented}")
-        return rendered
+            user = comment.get("user") or {}
+            if self.no_bots and self._is_bot(user):
+                continue
+            result.append({
+                "login": user.get("login", "unknown"),
+                "is_bot": self._is_bot(user),
+                "body": body,
+                "created_at": comment.get("created_at", ""),
+            })
+        return result
 
-    def _fetch_diff_comments(self) -> OrderedDict[str, list[str]]:
+    def _fetch_diff_comments(self) -> OrderedDict[str, list[dict]]:
         comments = self._gh_api_paginate(f"/repos/{self.owner}/{self.repo}/pulls/{self.pr_number}/comments")
-        grouped: OrderedDict[str, list[str]] = OrderedDict()
+        grouped: OrderedDict[str, list[dict]] = OrderedDict()
 
         for comment in comments:
             body = (comment.get("body") or "").strip()
-            user = comment.get("user", {})
-            if not body or user.get("type") == "Bot":
+            if not body:
+                continue
+            user = comment.get("user") or {}
+            if self.no_bots and self._is_bot(user):
                 continue
 
             path = comment.get("path") or "unknown"
-            login = user.get("login", "unknown")
-            line = comment.get("line")
-            line_tag = f" (L{line})" if line else ""
-            text = f"- @{login}{line_tag}: {body.replace(chr(10), chr(10) + '  ')}"
-
-            if path not in grouped:
-                grouped[path] = []
-            grouped[path].append(text)
+            entry = {
+                "login": user.get("login", "unknown"),
+                "is_bot": self._is_bot(user),
+                "body": body,
+                "line": comment.get("line"),
+                "start_line": comment.get("start_line"),
+                "side": comment.get("side") or "RIGHT",
+                "created_at": comment.get("created_at", ""),
+                "in_reply_to_id": comment.get("in_reply_to_id"),
+            }
+            grouped.setdefault(path, []).append(entry)
 
         return grouped
 
-    def _fetch_reviews(self) -> list[str]:
+    def _fetch_reviews(self) -> list[dict]:
         reviews = self._gh_api_paginate(f"/repos/{self.owner}/{self.repo}/pulls/{self.pr_number}/reviews")
-        rendered: list[str] = []
+        result: list[dict] = []
         for review in reviews:
-            body = (review.get("body") or "").strip()
-            user = review.get("user", {})
-            if not body or user.get("type") == "Bot":
+            state = review.get("state") or "COMMENTED"
+            # Drop noisy PENDING drafts (author's own in-progress state).
+            if state == "PENDING":
                 continue
-            login = user.get("login", "unknown")
-            state = review.get("state", "COMMENTED")
-            rendered.append(f"- @{login} ({state}): {body.replace(chr(10), chr(10) + '  ')}")
-        return rendered
+            user = review.get("user") or {}
+            if self.no_bots and self._is_bot(user):
+                continue
+            result.append({
+                "login": user.get("login", "unknown"),
+                "is_bot": self._is_bot(user),
+                "state": state,
+                "body": (review.get("body") or "").strip(),
+                "submitted_at": review.get("submitted_at", ""),
+            })
+        return result
 
-    def _generate_diff(self, base_branch: str, head_branch: str, head_sha: str) -> str:
-        if not base_branch or not head_sha:
-            return "[No differences found or error generating diff]"
+    _NO_DIFF = "[No differences found or error generating diff]"
 
-        self._git_fetch_if_possible(head_branch)
-        self._git_fetch_if_possible(base_branch)
-
-        diff_ref = f"origin/{base_branch}...{head_sha}"
-
+    def _generate_diff(self) -> str:
         if self.diff_mode == "stat":
-            return self._run_git(["diff", "--stat", diff_ref])
+            return self._generate_stat_diff()
+
+        unified = self._fetch_unified_diff()
+        if not unified.strip():
+            return self._NO_DIFF
         if self.diff_mode == "full":
-            return self._run_git(["diff", diff_ref])
-        return self._generate_compact_diff(diff_ref)
+            return unified
+        return self._generate_compact_diff(unified)
 
-    def _git_fetch_if_possible(self, branch: str) -> None:
-        if not branch:
-            return
-        subprocess.run(["git", "fetch", "origin", branch], capture_output=True, text=True, check=False)
+    def _fetch_unified_diff(self) -> str:
+        cmd = ["gh", "pr", "diff", self.pr_number, "--repo", f"{self.owner}/{self.repo}"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            return ""
+        return proc.stdout
 
-    def _run_git(self, args: list[str]) -> str:
-        proc = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
-        output = proc.stdout.strip()
-        if proc.returncode != 0 or not output:
-            return "[No differences found or error generating diff]"
-        return output
+    def _generate_stat_diff(self) -> str:
+        files = self._gh_api_paginate(f"/repos/{self.owner}/{self.repo}/pulls/{self.pr_number}/files")
+        if not files:
+            return self._NO_DIFF
 
-    def _generate_compact_diff(self, diff_ref: str) -> str:
-        proc = subprocess.run(["git", "diff", "-U0", diff_ref], capture_output=True, text=True, check=False)
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return "[No differences found or error generating diff]"
+        total_add = 0
+        total_del = 0
+        rows: list[tuple[str, int, int]] = []
+        for f in files:
+            name = f.get("filename", "") or ""
+            add = int(f.get("additions", 0) or 0)
+            dele = int(f.get("deletions", 0) or 0)
+            total_add += add
+            total_del += dele
+            rows.append((name, add, dele))
 
-        current_file = ""
+        name_width = max((len(n) for n, _, _ in rows), default=0)
+        lines = [f"{n.ljust(name_width)} | +{a}/-{d}" for n, a, d in rows]
+        lines.extend([
+            "",
+            f"Summary: {len(rows)} file(s) changed, {total_add} insertion(s)(+), {total_del} deletion(s)(-)",
+        ])
+        return "\n".join(lines)
+
+    def _generate_compact_diff(self, unified: str) -> str:
         hunk_num = 0
         lines: list[str] = []
+        add_count = 0
+        del_count = 0
 
-        for line in proc.stdout.splitlines():
+        for line in unified.splitlines():
             file_match = re.match(r"^diff --git a/(.+) b/(.+)$", line)
             if file_match:
-                current_file = file_match.group(2)
                 hunk_num = 0
-                lines.append(current_file)
+                lines.append(file_match.group(2))
                 continue
 
             hunk_match = re.match(
                 r"^@@ -(?P<old_start>\d+)(,(?P<old_count>\d+))? \+(?P<new_start>\d+)(,(?P<new_count>\d+))? @@(?P<context>.*)$",
                 line,
             )
-            if not hunk_match:
+            if hunk_match:
+                hunk_num += 1
+                old_start = int(hunk_match.group("old_start"))
+                old_count = int(hunk_match.group("old_count") or "1")
+                new_start = int(hunk_match.group("new_start"))
+                new_count = int(hunk_match.group("new_count") or "1")
+                old_end = old_start if old_count == 0 else old_start + old_count - 1
+                new_end = new_start if new_count == 0 else new_start + new_count - 1
+                context = (hunk_match.group("context") or "").strip()
+                change_info = f"+{new_count}/-{old_count}"
+
+                if context:
+                    lines.append(
+                        f"  hunk {hunk_num}: lines {new_start}-{new_end} "
+                        f"(was {old_start}-{old_end}, {change_info}) @ {context}"
+                    )
+                else:
+                    lines.append(
+                        f"  hunk {hunk_num}: lines {new_start}-{new_end} "
+                        f"(was {old_start}-{old_end}, {change_info})"
+                    )
                 continue
 
-            hunk_num += 1
-            old_start = int(hunk_match.group("old_start"))
-            old_count = int(hunk_match.group("old_count") or "1")
-            new_start = int(hunk_match.group("new_start"))
-            new_count = int(hunk_match.group("new_count") or "1")
-            old_end = old_start if old_count == 0 else old_start + old_count - 1
-            new_end = new_start if new_count == 0 else new_start + new_count - 1
-            context = (hunk_match.group("context") or "").strip()
-            change_info = f"+{new_count}/-{old_count}"
+            # Count actual +/- lines (not +++/--- file headers)
+            if line.startswith("+") and not line.startswith("+++"):
+                add_count += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                del_count += 1
 
-            if context:
-                lines.append(
-                    f"  hunk {hunk_num}: lines {new_start}-{new_end} "
-                    f"(was {old_start}-{old_end}, {change_info}) @ {context}"
-                )
-            else:
-                lines.append(
-                    f"  hunk {hunk_num}: lines {new_start}-{new_end} "
-                    f"(was {old_start}-{old_end}, {change_info})"
-                )
-
-        shortstat = self._run_git(["diff", "--shortstat", diff_ref])
-        if shortstat and not shortstat.startswith("[No differences"):
-            lines.extend(["", f"Summary: {shortstat}"])
-
-        return "\n".join(lines) if lines else "[No differences found or error generating diff]"
+        if not lines:
+            return self._NO_DIFF
+        lines.extend(["", f"Summary: {add_count} insertion(s)(+), {del_count} deletion(s)(-)"])
+        return "\n".join(lines)
 
     @staticmethod
     def clean_pr_body(text: str) -> str:

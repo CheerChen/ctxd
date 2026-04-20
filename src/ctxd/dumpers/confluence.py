@@ -22,8 +22,8 @@ class ConfluenceDumper(BaseDumper):
         fmt: str,
         quiet: bool = False,
         verbose: bool = False,
-        recursive: bool = True,
-        include_images: bool = True,
+        recursive: bool = False,
+        include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
     ):
