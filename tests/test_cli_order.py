@@ -26,7 +26,7 @@ def test_supports_option_after_url(monkeypatch) -> None:
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
     monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
 
-    result = runner.invoke(main, ["https://github.com/o/r/pull/9", "-q", "-o", "auto"])
+    result = runner.invoke(main, ["https://github.com/o/r/pull/9", "-q", "-O"])
 
     assert result.exit_code == 0
     assert _FakeGitHubDumper.last_instance is not None

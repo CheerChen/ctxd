@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1]
+
+### Added
+* **Confluence / Jira credentials via config file** : `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` can now live in `~/.config/ctxd/config` (same file already used for `SLACK_TOKEN`), instead of being re-exported in every shell. Env vars still win over the file, so CI and one-off overrides are unaffected.
+* **Loose permission warning** : ctxd now prints a one-shot stderr warning if `~/.config/ctxd/config` is readable by group/others (any bits in `0o077`), along with the exact `chmod 600` command to fix it.
+* **Auto-output flag `-O`** : new short flag (curl-style) that auto-generates the output path/directory by source — e.g. `ctxd -O <url>` writes `pr-9.md` / `slack-C123-....md` / `confluence-<id>/` to the cwd. `-o <path>` and `-O` are mutually exclusive.
+
+### Changed
+* **Improved auth error messages** : when credentials are missing, the error now lists both the env-var form and the config-file form with the canonical path and sample keys, so you can pick whichever you prefer.
+* **Removed `-o auto` syntax** : the magic string `auto` is no longer recognized as an `-o` value — use `-O` instead. (0.3.0 was never released, so this is a pre-release cleanup, not a breaking change against any published version.)
+
 ## [0.3.0]
 
 ### Breaking

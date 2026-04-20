@@ -18,6 +18,8 @@ from ctxd.router import Source, detect
 @click.argument("url_or_cmd", required=False)
 @click.argument("shell", required=False)
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file or directory")
+@click.option("-O", "--auto-output", is_flag=True, default=False,
+              help="Auto-generate output path by source (mutually exclusive with -o)")
 @click.option("-f", "--format", "fmt", type=click.Choice(["text", "md"]), default="md", show_default=True)
 @click.option("-q", "--quiet", is_flag=True, help="Silence progress logs to stderr")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logs to stderr")
@@ -28,9 +30,9 @@ from ctxd.router import Source, detect
 @click.option("--download-files", is_flag=True, default=False)
 @click.option("--raw", is_flag=True, default=False, help="Keep original Slack mrkdwn")
 @click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
-              help="Confluence: also export child pages (requires -o)")
+              help="Confluence: also export child pages (requires -o or -O)")
 @click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
-              help="Confluence: download referenced images (requires -o)")
+              help="Confluence: download referenced images (requires -o or -O)")
 @click.option("--all-attachments", is_flag=True, default=False)
 @click.option("--debug", is_flag=True, default=False)
 @click.version_option(__version__, prog_name="ctxd")
@@ -40,6 +42,7 @@ def main(
     url_or_cmd: str | None,
     shell: str | None,
     output: Path | None,
+    auto_output: bool,
     fmt: str,
     quiet: bool,
     verbose: bool,
@@ -70,6 +73,9 @@ def main(
     if not url:
         raise click.UsageError("URL is required. Or use: ctxd init <zsh|bash|fish>")
 
+    if output is not None and auto_output:
+        raise click.UsageError("-o/--output and -O/--auto-output are mutually exclusive")
+
     try:
         source = detect(url)
     except ValueError as exc:
@@ -90,6 +96,7 @@ def main(
         _validate_confluence_flags(
             url=url,
             output=output,
+            auto_output=auto_output,
             recursive=recursive,
             include_images=include_images,
             all_attachments=all_attachments,
@@ -137,7 +144,7 @@ def main(
         )
 
     resolved_output: Path | None = output
-    if output and output_str == "auto":
+    if auto_output:
         resolved_output = Path(dumper.default_filename())
 
     if resolved_output and source is Source.CONFLUENCE:
@@ -180,11 +187,12 @@ def _emit_shell_alias(shell: str | None) -> None:
 def _validate_confluence_flags(
     url: str,
     output: Path | None,
+    auto_output: bool,
     recursive: bool,
     include_images: bool,
     all_attachments: bool,
 ) -> None:
-    if output is not None:
+    if output is not None or auto_output:
         return
 
     used: list[str] = []
@@ -199,7 +207,8 @@ def _validate_confluence_flags(
 
     flags = " ".join(used)
     raise click.UsageError(
-        f"{flags} requires -o <dir> (Confluence writes a directory tree / images to disk).\n"
+        f"{flags} requires -o <dir> or -O (Confluence writes a directory tree / images to disk).\n"
         f"Try:   ctxd {url} {flags} -o <dir>\n"
+        f"Or:    ctxd {url} {flags} -O\n"
         f"Or omit the flags for single-page stdout: ctxd {url}"
     )

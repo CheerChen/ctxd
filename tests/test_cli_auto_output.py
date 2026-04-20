@@ -40,7 +40,7 @@ def test_auto_output_for_github(monkeypatch) -> None:
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
     monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
 
-    result = runner.invoke(main, ["-o", "auto", "https://github.com/o/r/pull/9"])
+    result = runner.invoke(main, ["-O", "https://github.com/o/r/pull/9"])
 
     assert result.exit_code == 0
     assert _FakeGitHubDumper.last_instance is not None
@@ -52,7 +52,7 @@ def test_auto_output_for_slack(monkeypatch) -> None:
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.SLACK_THREAD)
     monkeypatch.setattr("ctxd.cli.SlackDumper", _FakeSlackDumper)
 
-    result = runner.invoke(main, ["-o", "auto", "https://foo.slack.com/archives/C123/p1735881234123456"])
+    result = runner.invoke(main, ["-O", "https://foo.slack.com/archives/C123/p1735881234123456"])
 
     assert result.exit_code == 0
     assert _FakeSlackDumper.last_instance is not None
@@ -65,9 +65,20 @@ def test_auto_output_for_confluence_creates_directory(monkeypatch) -> None:
     monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
 
     with runner.isolated_filesystem():
-        result = runner.invoke(main, ["-o", "auto", "https://foo.atlassian.net/wiki/spaces/ABC/pages/3140419873/title"])
+        result = runner.invoke(main, ["-O", "https://foo.atlassian.net/wiki/spaces/ABC/pages/3140419873/title"])
 
         assert result.exit_code == 0
         assert _FakeConfluenceDumper.last_instance is not None
         assert _FakeConfluenceDumper.last_instance.output == "confluence-3140419873"
         assert Path("confluence-3140419873").is_dir()
+
+
+def test_output_and_auto_output_are_mutually_exclusive(monkeypatch) -> None:
+    runner = CliRunner()
+    monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
+    monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
+
+    result = runner.invoke(main, ["-o", "pr.md", "-O", "https://github.com/o/r/pull/9"])
+
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output

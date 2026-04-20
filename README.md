@@ -46,9 +46,9 @@ This enables the `ctx` shorthand for `ctxd`.
 | Option | Description |
 |--------|-------------|
 | `-o, --output <path>` | Write to file/directory (default: stdout) |
-| `-o auto` | Auto-generate output path by source |
+| `-O, --auto-output` | Auto-generate output path by source (mutually exclusive with `-o`) |
 | `-f, --format text\|md` | Output format (default: `md`) |
-| `-q, --quiet` | Suppress progress logs |
+| `-q, --quiet` | Suppress progress logs (auto-enabled when stderr is not a TTY) |
 | `-v, --verbose` | Verbose logging |
 
 Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
@@ -57,7 +57,7 @@ Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ct
 
 ## GitHub PR
 
-Export PR metadata, comments, and code changes.
+Export PR metadata, reviews, inline comments, timeline comments, and code changes.
 
 ### Prerequisites
 
@@ -68,13 +68,26 @@ brew install gh
 gh auth login
 ```
 
+Diff generation uses the GitHub API (`gh pr diff` and `/pulls/{n}/files`), so it works from any working directory — no local clone of the target repo required.
+
 ### Usage
 
 ```bash
 ctxd https://github.com/owner/repo/pull/123
 ctxd https://github.com/owner/repo/pull/123 -o pr-123.md
-ctxd -o auto https://github.com/owner/repo/pull/123
+ctxd -O https://github.com/owner/repo/pull/123
 ```
+
+### Output structure
+
+The generated markdown has the following top-level sections:
+
+- `## Reviews` — each review with `@author`, `**STATE**` (APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED), submission timestamp, and body. Empty-body reviews (e.g. bare approvals) are preserved.
+- `## Inline Review Comments` — inline code comments grouped by file, rendered as `@user [SIDE] L{start}-{end} (timestamp):` with LEFT/RIGHT diff side and multi-line ranges.
+- `## Timeline Comments` — issue-level comments on the PR conversation.
+- `## Git Diff` — code diff (mode controlled by `-d`).
+
+All reviews and comments include ISO-8601 timestamps (with timezone) from the GitHub API. Bot-authored content is **kept by default** — pass `--no-bots` to drop reviews/comments from `pr-agent`, `devin-ai-integration`, `coderabbitai`, etc.
 
 ### Options
 
@@ -82,6 +95,7 @@ ctxd -o auto https://github.com/owner/repo/pull/123
 |--------|-------------|
 | `-d, --diff-mode full\|compact\|stat` | Diff output mode (default: `compact`) |
 | `--clean-body / --no-clean-body` | Strip bot-injected HTML noise from PR body (default: on) |
+| `--no-bots` | Drop bot-authored reviews and comments (default: keep all bots) |
 
 ---
 
@@ -130,40 +144,53 @@ ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 
 ## Confluence
 
-Recursively export Confluence pages to Markdown with image downloading.
+Export Confluence pages to Markdown. By default prints a single page to stdout; pass `-r` / `-i` with `-o <dir>` (or `-O`) to opt into recursive export with images.
 
 ### Prerequisites
 
 Requires an Atlassian API Token. Obtain at: [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
 
-Configure (all three environment variables are required):
+Configure (all three values are required). Pick one:
 
 ```bash
+# Option 1: Environment variables
 export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
 export CONFLUENCE_EMAIL="you@example.com"
 export CONFLUENCE_API_TOKEN="your-token"
+
+# Option 2: Config file (recommended for persistent use)
+mkdir -p ~/.config/ctxd
+cat >> ~/.config/ctxd/config <<'EOF'
+CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+CONFLUENCE_EMAIL=you@example.com
+CONFLUENCE_API_TOKEN=your-token
+EOF
+chmod 600 ~/.config/ctxd/config
 ```
 
-Or add to config file `~/.config/ctxd/config`.
+Environment variables take precedence over the config file, so CI and one-off overrides work unchanged. If the file is readable by group/others, ctxd prints a one-shot stderr warning with the exact `chmod 600` command to fix it.
 
 ### Usage
 
 ```bash
-# Export to directory (recursive + images, default behavior)
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -o ./output
+# Default: single page to stdout
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456
 
-# stdout only (requires disabling recursive and images)
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --no-recursive --no-include-images
+# Recursive export with images, to an explicit directory
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./output
+
+# Or let ctxd pick the output directory name
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ```
 
-> **Note**: Recursive export or image download requires `-o <dir>`, stdout is not supported.
+> **Note**: `-r` / `-i` / `--all-attachments` require `-o <dir>` or `-O` (Confluence writes a directory tree / images to disk).
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `-r, --recursive / --no-recursive` | Include child pages (default: on) |
-| `-i, --include-images / --no-include-images` | Download images (default: on) |
+| `-r, --recursive / --no-recursive` | Include child pages (default: off) |
+| `-i, --include-images / --no-include-images` | Download referenced images (default: off) |
 | `--all-attachments` | Download all attachments (default: only referenced images) |
 | `--debug` | Save raw HTML for debugging |
 
@@ -175,7 +202,7 @@ Export full Jira issue content (description, comments, custom fields).
 
 ### Prerequisites
 
-Shares authentication with Confluence, using the same three environment variables:
+Shares authentication with Confluence — configure via environment variables **or** `~/.config/ctxd/config` (see the [Confluence section](#confluence) for the full config-file setup, including `chmod 600`):
 
 ```bash
 export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
