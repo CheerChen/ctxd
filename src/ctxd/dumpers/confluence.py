@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from ctxd.auth import ensure_confluence_auth
@@ -69,10 +70,12 @@ class ConfluenceDumper(BaseDumper):
             page = self.client.get_page(page_id)
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
+        metadata_block = self._build_metadata_block(page)
         markdown, _, marker_line_map = html_to_markdown(html_content or "", image_map={}, base_url=self.client.base_url)
-        # Title header "# {title}\n\n" adds 2 lines offset
-        marker_line_map = {ref: line + 2 for ref, line in marker_line_map.items()}
-        result = f"# {title}\n\n{markdown}"
+        # Title "# {title}\n\n" = 2 lines; metadata block contributes its own newlines.
+        offset = 2 + metadata_block.count("\n")
+        marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
+        result = f"# {title}\n\n{metadata_block}{markdown}"
 
         comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
         if comments_md:
@@ -156,9 +159,11 @@ class ConfluenceDumper(BaseDumper):
                 )
 
             base_url = self.client.base_url if self.client else None
+            metadata_block = self._build_metadata_block(page_data)
             markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
-            marker_line_map = {ref: line + 2 for ref, line in marker_line_map.items()}
-            markdown = f"# {title}\n\n{markdown}"
+            offset = 2 + metadata_block.count("\n")
+            marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
+            markdown = f"# {title}\n\n{metadata_block}{markdown}"
 
             comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
             if comments_md:
@@ -260,3 +265,50 @@ class ConfluenceDumper(BaseDumper):
     def _is_image_file(filename: str) -> bool:
         lowered = filename.lower()
         return lowered.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"))
+
+    def _build_metadata_block(self, page: dict) -> str:
+        space_id = page.get("spaceId") or ""
+        if space_id and self.client is not None:
+            space = self.client.get_space_name(space_id)
+        else:
+            space = space_id or "Unknown"
+
+        author_id = page.get("authorId") or ""
+        if author_id and self.client is not None:
+            author = self.client.get_user_display_name(author_id)
+        else:
+            author = author_id or "Unknown"
+
+        created = _format_iso_date(page.get("createdAt") or "")
+        version = page.get("version") or {}
+        last_modified = _format_iso_date(version.get("createdAt") or "")
+
+        webui = (page.get("_links") or {}).get("webui") or ""
+        if webui and self.client is not None:
+            url = f"{self.client.base_url}/wiki{webui}"
+        else:
+            url = "Unknown"
+
+        lines = [
+            "## Metadata",
+            "",
+            "| Field | Value |",
+            "|-------|-------|",
+            f"| **Space** | {space} |",
+            f"| **Author** | {author} |",
+            f"| **Created** | {created} |",
+            f"| **Last Modified** | {last_modified} |",
+            f"| **URL** | {url} |",
+            "",
+            "",
+        ]
+        return "\n".join(lines)
+
+
+def _format_iso_date(iso: str) -> str:
+    if not iso:
+        return "Unknown"
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return iso[:10]
