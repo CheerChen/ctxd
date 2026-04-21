@@ -87,6 +87,8 @@ class JiraDumper(BaseDumper):
         components = [c.get("name", "") for c in (fields.get("components") or [])]
         created = fields.get("created", "")
         updated = fields.get("updated", "")
+        site, _ = parse_jira_url(self.url)
+        issue_url = f"{site}/browse/{key}"
 
         # Description: prefer rendered HTML → markdown, fallback to plain text
         description_html = rendered.get("description", "")
@@ -114,6 +116,7 @@ class JiraDumper(BaseDumper):
                 components=components,
                 created=created,
                 updated=updated,
+                issue_url=issue_url,
                 description=description,
                 custom_fields=custom_fields,
                 subtasks=subtasks,
@@ -134,6 +137,7 @@ class JiraDumper(BaseDumper):
             components=components,
             created=created,
             updated=updated,
+            issue_url=issue_url,
             description=description,
             custom_fields=custom_fields,
             subtasks=subtasks,
@@ -156,6 +160,7 @@ class JiraDumper(BaseDumper):
         components: list[str],
         created: str,
         updated: str,
+        issue_url: str,
         description: str,
         custom_fields: list[dict],
         subtasks: list[dict],
@@ -179,6 +184,7 @@ class JiraDumper(BaseDumper):
             f"| **Components** | {', '.join(components) if components else 'None'} |",
             f"| **Created** | {created} |",
             f"| **Updated** | {updated} |",
+            f"| **URL** | {issue_url} |",
             "",
             "## Description",
             "",
@@ -253,6 +259,7 @@ class JiraDumper(BaseDumper):
         components: list[str],
         created: str,
         updated: str,
+        issue_url: str,
         description: str,
         custom_fields: list[dict],
         subtasks: list[dict],
@@ -275,6 +282,7 @@ class JiraDumper(BaseDumper):
             f"Components: {', '.join(components) if components else 'None'}",
             f"Created:    {created}",
             f"Updated:    {updated}",
+            f"URL:        {issue_url}",
             "",
             "--- DESCRIPTION ---",
             description,

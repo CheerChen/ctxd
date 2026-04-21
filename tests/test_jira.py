@@ -88,6 +88,7 @@ def test_jira_dumper_transform() -> None:
     assert "test" in result
     assert "Charlie" in result
     assert "Working on this now" in result
+    assert "| **URL** | https://kinto-dev.atlassian.net/browse/INFRA-10588 |" in result
 
 
 def test_jira_dumper_transform_text() -> None:
@@ -128,6 +129,7 @@ def test_jira_dumper_transform_text() -> None:
     assert "Done" in result
     assert "Unassigned" in result
     assert "Plain description" in result
+    assert "URL:        https://kinto-dev.atlassian.net/browse/INFRA-10588" in result
 
 
 def test_jira_dumper_default_filename() -> None:

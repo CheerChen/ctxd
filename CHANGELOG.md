@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2]
+
+### Added
+* **Confluence page metadata** : every dumped Confluence page now leads with a `## Metadata` table (Space, Author, Created, Last Modified, URL), mirroring the Jira dumper and closing the largest self-containment gap in Confluence output. Dates render as `YYYY-MM-DD`; unresolved users/spaces fall back to the raw account/space id so the table schema stays stable for LLM consumers. Adds one cached `/wiki/api/v2/spaces/{id}` lookup per dump.
+* **Jira issue URL in metadata** : the existing Jira `## Metadata` table (markdown) and `--- METADATA ---` block (text) gain a `URL` row pointing at `<site>/browse/<KEY>`, so dumped issues are self-linking without any extra API call.
+
 ## [0.3.1]
 
 ### Added

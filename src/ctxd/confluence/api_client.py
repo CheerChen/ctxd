@@ -14,6 +14,7 @@ class ConfluenceClient:
         self.session.auth = (email, api_token)
         self.session.headers.update({"Accept": "application/json"})
         self._user_cache: dict[str, str] = {}
+        self._space_cache: dict[str, str] = {}
 
     def get_user_display_name(self, account_id: str) -> str:
         if account_id in self._user_cache:
@@ -26,6 +27,19 @@ class ConfluenceClient:
         except Exception:
             name = account_id
         self._user_cache[account_id] = name
+        return name
+
+    def get_space_name(self, space_id: str) -> str:
+        if space_id in self._space_cache:
+            return self._space_cache[space_id]
+        try:
+            url = f"{self.base_url}/wiki/api/v2/spaces/{space_id}"
+            resp = self.session.get(url, timeout=10)
+            resp.raise_for_status()
+            name = resp.json().get("name", space_id)
+        except Exception:
+            name = space_id
+        self._space_cache[space_id] = name
         return name
 
     def get_page(self, page_id: str) -> dict[str, Any]:
