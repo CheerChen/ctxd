@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
-import os
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
@@ -31,9 +30,6 @@ class SlackDumper(BaseDumper):
         self.raw = raw
         self.token = ""
         self.session = requests.Session()
-        self.cache_dir = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "ctxd"
-        self.user_cache = self.cache_dir / "users.json"
-        self.channel_cache = self.cache_dir / "channels.json"
 
     def default_filename(self) -> str:
         channel_id, thread_ts = parse_slack_thread_url(self.url)
@@ -43,7 +39,6 @@ class SlackDumper(BaseDumper):
     def validate_auth(self) -> None:
         self.token = get_slack_token()
         self.session.headers.update({"Authorization": f"Bearer {self.token}"})
-        self._ensure_cache()
 
     def fetch(self) -> dict:
         channel, thread_ts = parse_slack_thread_url(self.url)
@@ -76,7 +71,9 @@ class SlackDumper(BaseDumper):
             lines.append(f"# Slack Thread: {channel}-{thread_ts}")
             lines.append("")
             lines.append(f"**Channel:** #{channel_name} ({channel})")
+            lines.append(f"**Channel URL:** {self._channel_url(channel)}")
             lines.append(f"**Thread Started:** {start_time}")
+            lines.append(f"**Thread URL:** {self._thread_url(channel, thread_ts)}")
             lines.append("")
             lines.append(f"## Participants ({len(participants)})")
             lines.extend(self._format_participant_lines(participants, markdown=True))
@@ -88,7 +85,9 @@ class SlackDumper(BaseDumper):
             lines.append(f"# SLACK THREAD: {channel}-{thread_ts}")
             lines.append("################################################################################")
             lines.append(f"Channel: #{channel_name} ({channel})")
+            lines.append(f"Channel URL: {self._channel_url(channel)}")
             lines.append(f"Thread Started: {start_time}")
+            lines.append(f"Thread URL: {self._thread_url(channel, thread_ts)}")
             lines.append("")
             lines.append(f"--- PARTICIPANTS ({len(participants)}) ---")
             lines.extend(self._format_participant_lines(participants, markdown=False))
@@ -149,72 +148,34 @@ class SlackDumper(BaseDumper):
 
         return messages
 
-    def _ensure_cache(self) -> None:
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        if not self.user_cache.exists():
-            self.user_cache.write_text("{}", encoding="utf-8")
-        if not self.channel_cache.exists():
-            self.channel_cache.write_text("{}", encoding="utf-8")
-
-    def _read_cache(self, path: Path) -> dict:
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-
-    def _write_cache(self, path: Path, payload: dict) -> None:
-        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-
     def _get_user(self, user_id: str) -> dict:
-        cache = self._read_cache(self.user_cache)
-        if user_id in cache:
-            return cache[user_id]
-
         try:
             payload = self._api_call("users.info", {"user": user_id})
             user = payload.get("user", {})
-            data = {
+            profile = user.get("profile", {})
+            return {
                 "id": user.get("id", user_id),
-                "name": user.get("name") or user_id,
-                "display_name": user.get("profile", {}).get("display_name_normalized")
-                or user.get("profile", {}).get("real_name_normalized")
+                "display_name": profile.get("display_name_normalized") or profile.get("display_name") or "",
+                "name": profile.get("real_name_normalized")
+                or profile.get("real_name")
                 or user.get("real_name")
                 or user.get("name")
                 or user_id,
-                "real_name": user.get("profile", {}).get("real_name_normalized")
-                or user.get("real_name")
-                or "",
                 "is_bot": bool(user.get("is_bot", False)),
             }
         except Exception:
-            data = {
+            return {
                 "id": user_id,
+                "display_name": "",
                 "name": user_id,
-                "display_name": user_id,
-                "real_name": user_id,
                 "is_bot": False,
             }
 
-        cache[user_id] = data
-        self._write_cache(self.user_cache, cache)
-        return data
-
     def _get_channel_name(self, channel_id: str) -> str:
-        cache = self._read_cache(self.channel_cache)
-        cached = cache.get(channel_id, {}).get("name")
-        if cached:
-            return cached
-
         try:
             payload = self._api_call("conversations.info", {"channel": channel_id})
             channel = payload.get("channel", {})
-            name = channel.get("name", channel_id)
-            cache[channel_id] = {
-                "name": name,
-                "is_private": bool(channel.get("is_private", False)),
-            }
-            self._write_cache(self.channel_cache, cache)
-            return name
+            return channel.get("name") or channel_id
         except Exception:
             return channel_id
 
@@ -222,10 +183,11 @@ class SlackDumper(BaseDumper):
         lines: list[str] = []
         for uid in participants:
             user = self._get_user(uid)
-            label = f"@{user.get('display_name') or user.get('name') or uid}"
-            real_name = user.get("real_name") or ""
-            if real_name:
-                label += f" ({real_name})"
+            name = user.get("name") or uid
+            display_name = user.get("display_name") or ""
+            label = f"@{name}"
+            if display_name and display_name != name:
+                label = f"@{display_name} ({name})"
             if user.get("is_bot"):
                 label += " [BOT]"
             lines.append(f"- {label}")
@@ -240,7 +202,7 @@ class SlackDumper(BaseDumper):
 
         if user_id:
             user = self._get_user(user_id)
-            display_name = f"@{user.get('display_name') or user.get('name') or user_id}"
+            display_name = f"@{self._conversation_user_name(user, user_id)}"
         elif bot_name:
             display_name = f"@{bot_name} [BOT]"
         else:
@@ -328,7 +290,7 @@ class SlackDumper(BaseDumper):
         def replace(match: re.Match[str]) -> str:
             uid = match.group(1)
             user = self._get_user(uid)
-            username = user.get("display_name") or user.get("name") or uid
+            username = self._conversation_user_name(user, uid)
             return f"@{username}"
 
         return pattern.sub(replace, text)
@@ -353,7 +315,69 @@ class SlackDumper(BaseDumper):
 
     @staticmethod
     def _convert_mrkdwn_to_markdown(text: str) -> str:
-        text = re.sub(r"\*([^*]+)\*", r"**\1**", text)
-        text = re.sub(r"_([^_]+)_", r"*\1*", text)
-        text = re.sub(r"~([^~]+)~", r"~~\1~~", text)
+        text = SlackDumper._convert_slack_list_markers(text)
+        text = re.sub(r"\*([^\n*]+)\*", r"**\1**", text)
+        text = re.sub(r"_([^\n_]+)_", r"*\1*", text)
+        text = re.sub(r"~([^\n~]+)~", r"~~\1~~", text)
         return text
+
+    @staticmethod
+    def _conversation_user_name(user: dict, fallback: str) -> str:
+        return user.get("name") or fallback
+
+    def _channel_url(self, channel: str) -> str:
+        parsed = urlsplit(self.url)
+        base_url = (
+            f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://slack.com"
+        )
+        team_match = re.search(r"/client/([^/]+)/", parsed.path)
+        if team_match:
+            return f"{base_url}/client/{team_match.group(1)}/{channel}"
+        return f"{base_url}/archives/{channel}"
+
+    def _thread_url(self, channel: str, thread_ts: str) -> str:
+        parsed = urlsplit(self.url)
+        base_url = (
+            f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://slack.com"
+        )
+        team_match = re.search(r"/client/([^/]+)/", parsed.path)
+        if team_match:
+            return f"{base_url}/client/{team_match.group(1)}/{channel}/thread/{channel}-{thread_ts}"
+        return f"{base_url}/archives/{channel}/{self._thread_permalink_token(thread_ts)}"
+
+    @staticmethod
+    def _thread_permalink_token(thread_ts: str) -> str:
+        return f"p{thread_ts.replace('.', '')}"
+
+    @staticmethod
+    def _convert_slack_list_markers(text: str) -> str:
+        bullet_levels = {"\u2022": 0, "\u25e6": 1, "\u25aa": 2, "\u2023": 1}
+        marker_re = re.compile(
+            r"^(?P<indent>[ \t]*)(?P<marker>[\u2022\u25e6\u25aa\u2023])\s+(?P<body>.*)$"
+        )
+        in_code_block = False
+        lines: list[str] = []
+
+        for line in text.splitlines():
+            if line.strip().startswith("```"):
+                in_code_block = not in_code_block
+                lines.append(line)
+                continue
+
+            if in_code_block:
+                lines.append(line)
+                continue
+
+            match = marker_re.match(line)
+            if not match:
+                lines.append(line)
+                continue
+
+            indent = match.group("indent")
+            marker = match.group("marker")
+            explicit_level = sum(2 if char == "\t" else 1 for char in indent) // 2
+            level = max(explicit_level, bullet_levels[marker])
+            lines.append(f"{'  ' * level}- {match.group('body')}")
+
+        trailing_newline = "\n" if text.endswith("\n") else ""
+        return "\n".join(lines) + trailing_newline
