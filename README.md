@@ -223,6 +223,57 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 |--------|-------------|
 | `--debug` | Save raw HTML (`.debug.html`) for troubleshooting conversion issues |
 
+---
+
+## Obsidian mode
+
+Export a Confluence page or Jira issue as a single Markdown note with YAML frontmatter, suitable for dropping into an Obsidian vault. The note's `{source}_url` lets any later tooling (including a re-run of `ctxd`) recover the origin URL.
+
+### Usage
+
+```bash
+# Write to an explicit path
+ctxd https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title --obsidian -o ~/vault/notes/note.md
+
+# Auto-name from remote title, written to CWD
+ctxd https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title --obsidian -O
+
+# Jira works the same way
+ctxd https://your-site.atlassian.net/browse/PROJ-1 --obsidian -O
+```
+
+The output starts with:
+
+```yaml
+---
+confluence_url: https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title
+confluence_title: Title
+---
+
+# Title
+
+## Metadata
+...
+```
+
+### Behavior
+
+- **Sources**: Confluence and Jira only. GitHub PR / Slack URLs are rejected.
+- **Output**: requires `-o <file>` or `-O`. Naked `--obsidian` (no target) is rejected.
+- **Auto-naming (`-O`)**: derived from the remote title with Obsidian-link-sensitive characters (`[`, `]`, `#`, `^`, `|`) stripped, plus filesystem-safe cleanup. Jira titles become `KEY summary.md`.
+- **Attachments (Confluence)**: referenced images are downloaded automatically into `<attachments-base>/<ATTACHMENTS_DIR>/{page_id}-*` and the body's image references are rewritten to match. `<attachments-base>` is the nearest ancestor directory containing `.obsidian/` (vault root) when one exists; otherwise it falls back to the output file's parent directory. Stale files matching the same `{page_id}-*` prefix are cleaned up so the directory always reflects the current page.
+- **`--all-attachments`**: still opt-in; downloads non-image attachments too.
+- **`-r/--recursive`**: rejected — Obsidian mode is one-page-per-note by design.
+- **`-f text`**: rejected — frontmatter requires Markdown output.
+
+### Configuration
+
+Reuses the existing `~/.config/ctxd/config`:
+
+```
+ATTACHMENTS_DIR=assets   # relative to the output file's directory; default: assets
+```
+
 ## License
 
 [MIT](LICENSE)
