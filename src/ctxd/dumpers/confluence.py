@@ -27,12 +27,16 @@ class ConfluenceDumper(BaseDumper):
         include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
+        obsidian_mode: bool = False,
+        obsidian_auto_output: bool = False,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
         self.recursive = recursive
         self.include_images = include_images
         self.all_attachments = all_attachments
         self.debug = debug
+        self.obsidian_mode = obsidian_mode
+        self.obsidian_auto_output = obsidian_auto_output
         self.client: ConfluenceClient | None = None
 
     def validate_auth(self) -> None:
@@ -84,6 +88,10 @@ class ConfluenceDumper(BaseDumper):
         return result
 
     def dump(self) -> None:
+        if self.obsidian_mode:
+            self._dump_obsidian()
+            return
+
         self.validate_auth()
         raw = self.fetch()
 
@@ -111,6 +119,87 @@ class ConfluenceDumper(BaseDumper):
 
         self.log(f"✅ Export completed: {success}/{len(raw['pages'])} pages")
         self.log(f"📁 Output: {output_path}")
+
+    def _dump_obsidian(self) -> None:
+        from ctxd.obsidian import (
+            build_attachment_refs,
+            refresh_attachments,
+            resolve_attachments_base_dir,
+            resolve_attachments_dir_rel,
+            sanitize_note_stem,
+            wrap_with_frontmatter,
+        )
+
+        self.validate_auth()
+        if self.client is None:
+            raise RuntimeError("Confluence client not initialized")
+
+        _, page_id = parse_confluence_url(self.url)
+        page = self.client.get_page(page_id)
+        title = str(page.get("title", "Untitled"))
+
+        if self.output:
+            output_path = Path(self.output)
+        else:
+            stem = sanitize_note_stem(title, fallback=f"confluence-{page_id}")
+            output_path = Path.cwd() / f"{stem}.md"
+
+        attachments_dir_rel = resolve_attachments_dir_rel()
+        if attachments_dir_rel.is_absolute():
+            attachments_dir_abs = attachments_dir_rel
+        else:
+            base = resolve_attachments_base_dir(output_path)
+            attachments_dir_abs = base / attachments_dir_rel
+
+        html_content = page.get("body", {}).get("storage", {}).get("value") or ""
+
+        try:
+            attachments_meta = self.client.get_attachments(page_id)
+        except Exception as exc:
+            self.log(f"⚠ Failed to fetch attachments for {page_id}: {exc}")
+            attachments_meta = []
+
+        refs = build_attachment_refs(page_id, attachments_meta, attachments_dir_rel)
+        referenced_images = set(extract_confluence_images(html_content))
+
+        if self.all_attachments:
+            download_names = set(refs.keys())
+        else:
+            download_names = referenced_images & set(refs.keys())
+
+        image_map: dict[str, str] = {
+            name: refs[name].target_rel_path
+            for name in referenced_images
+            if name in refs
+        }
+
+        metadata_block = self._build_metadata_block(page)
+        markdown, _, marker_line_map = html_to_markdown(
+            html_content, image_map=image_map, base_url=self.client.base_url
+        )
+        offset = 2 + metadata_block.count("\n")
+        marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
+        body = f"# {title}\n\n{metadata_block}{markdown}"
+
+        comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+        if comments_md:
+            body += f"\n\n---\n\n## Comments\n\n{comments_md}"
+
+        content = wrap_with_frontmatter(body, "confluence", self.url, title)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+        self.log(f"✅ Saved to {output_path}")
+
+        desired_refs = [refs[name] for name in sorted(download_names)]
+        if desired_refs:
+            try:
+                count = refresh_attachments(
+                    self.client, page_id, desired_refs, attachments_dir_abs
+                )
+                self.log(f"📎 Refreshed {count} attachments in {attachments_dir_abs}")
+            except Exception as exc:
+                self.log(f"⚠ Attachment refresh failed: {exc}")
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -220,12 +309,11 @@ class ConfluenceDumper(BaseDumper):
         image_map: dict[str, str] = {}
         try:
             attachments = self.client.get_attachments(page_id)
-            attachment_map: dict[str, str] = {}
+            attachment_map: dict[str, dict] = {}
             for attachment in attachments:
                 filename = attachment.get("title", "")
-                link = attachment.get("downloadLink", "")
-                if filename and link:
-                    attachment_map[filename] = link
+                if filename:
+                    attachment_map[filename] = attachment
 
             if attachment_map:
                 global_attachment_pool.update(attachment_map)
@@ -241,11 +329,16 @@ class ConfluenceDumper(BaseDumper):
             for filename in used_attachments:
                 if not self._is_image_file(filename):
                     continue
-                link = attachment_map.get(filename) or global_attachment_pool.get(filename)
-                if not link:
+                attachment = attachment_map.get(filename) or global_attachment_pool.get(filename)
+                if not attachment:
+                    continue
+                file_id = attachment.get("fileId")
+                attachment_page_id = attachment.get("pageId") or page_id
+                if not file_id:
+                    self.log(f"    ⚠ Skipping {filename}: no fileId in attachment metadata")
                     continue
                 try:
-                    content = self.client.download_attachment(link)
+                    content = self.client.download_attachment(file_id=file_id, page_id=attachment_page_id)
                     local_path = image_dir / filename
                     local_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(local_path, "wb") as handle:

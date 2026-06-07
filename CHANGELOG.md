@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.3]
+
+### Added
+* **Obsidian mode** (`--obsidian`) : new flag for Confluence and Jira that writes a single Markdown note prefixed with a YAML frontmatter block (`{source}_url`, `{source}_title`), making the dump round-trippable as an Obsidian vault note. Requires `-o <file>` or `-O`; auto-naming derives a filename from the remote title with Obsidian-link-sensitive characters stripped. Confluence attachments referenced by the page are downloaded into `<attachments-base>/<ATTACHMENTS_DIR>/{page_id}-*` where `<attachments-base>` is the nearest ancestor containing `.obsidian/` (vault root auto-detection), falling back to the output file's parent. `ATTACHMENTS_DIR` defaults to `assets`, configurable via `~/.config/ctxd/config`. Stale files sharing the same `{page_id}-` prefix are cleaned up on each export. Rejects GitHub/Slack URLs, `-r/--recursive`, and `-f text`. Absorbs the `obsync` companion project — a separate repo previously maintained for this workflow.
+
+### Fixed
+* **Confluence attachment downloads via Atlassian Media Service** : the legacy `/wiki/download/attachments/...` endpoint now returns `401 Unauthorized` for API-token Basic auth on at least some Confluence Cloud sites (response carries `WWW-Authenticate: OAuth`, indicating the endpoint has been moved behind OAuth-only auth — consistent with Atlassian's ongoing migration of "classic" API tokens to scoped tokens). `ConfluenceClient.download_attachment` has been rewritten to route through the same Media Service the Confluence web UI uses: it fetches a per-page JWT `mediaToken` via `GET /wiki/rest/api/content/{pageId}?expand=body.view.mediaToken`, decodes the JWT's `iss` claim as the media client ID, then issues `GET https://api.media.atlassian.com/file/{fileId}/binary?token=…&client=…&collection=…`. Tokens are cached per page for the duration of the run. This fixes both `--obsidian` attachment refresh and the previously-broken `-r -i` recursive image export.
+
+### Changed
+* **`ConfluenceClient.download_attachment` signature** : changed from `download_attachment(download_link: str)` to `download_attachment(file_id: str, page_id: str)`. The old `downloadLink` field from the v2 attachments API now points at a 401-only endpoint and is no longer useful. Internal callers (the recursive image export and `--obsidian` attachment refresh) have been updated; treat this as a breaking change if you import ctxd as a library (which the README still advises against).
+
 ## [0.3.2]
 
 ### Added

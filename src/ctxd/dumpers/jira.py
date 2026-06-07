@@ -23,11 +23,41 @@ class JiraDumper(BaseDumper):
         quiet: bool = False,
         verbose: bool = False,
         debug: bool = False,
+        obsidian_mode: bool = False,
+        obsidian_auto_output: bool = False,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
         self.client: JiraClient | None = None
         self.issue_key: str = ""
         self.debug = debug
+        self.obsidian_mode = obsidian_mode
+        self.obsidian_auto_output = obsidian_auto_output
+
+    def dump(self) -> None:
+        if not self.obsidian_mode:
+            super().dump()
+            return
+
+        from ctxd.obsidian import sanitize_note_stem, wrap_with_frontmatter
+
+        self.validate_auth()
+        raw = self.fetch()
+        key = raw["key"]
+        summary = raw["fields"].get("summary", "Untitled")
+        title = f"[{key}] {summary}"
+
+        if self.output:
+            output_path = Path(self.output)
+        else:
+            stem = sanitize_note_stem(title, fallback=f"jira-{key}")
+            output_path = Path.cwd() / f"{stem}.md"
+
+        body = self.transform(raw)
+        content = wrap_with_frontmatter(body, "jira", self.url, title)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+        self.log(f"✅ Saved to {output_path}")
 
     def validate_auth(self) -> None:
         base_url, email, token = ensure_jira_auth()

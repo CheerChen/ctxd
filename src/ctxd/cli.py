@@ -34,6 +34,8 @@ from ctxd.router import Source, detect
 @click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
               help="Confluence: download referenced images (requires -o or -O)")
 @click.option("--all-attachments", is_flag=True, default=False)
+@click.option("--obsidian", is_flag=True, default=False,
+              help="Confluence/Jira: write an Obsidian note (frontmatter + body); requires -o or -O")
 @click.option("--debug", is_flag=True, default=False)
 @click.version_option(__version__, prog_name="ctxd")
 @click.pass_context
@@ -54,6 +56,7 @@ def main(
     recursive: bool,
     include_images: bool,
     all_attachments: bool,
+    obsidian: bool,
     debug: bool,
 ) -> None:
     """Unified context dumper for GitHub PR, Slack thread, Confluence, and Jira.
@@ -80,6 +83,15 @@ def main(
         source = detect(url)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if obsidian:
+        _validate_obsidian_flags(
+            source=source,
+            output=output,
+            auto_output=auto_output,
+            recursive=recursive,
+            fmt=fmt,
+        )
 
     # Auto-quiet when stderr is being piped/redirected (not a TTY), unless the
     # user explicitly asked for quiet or verbose.
@@ -111,6 +123,8 @@ def main(
             include_images=include_images,
             all_attachments=all_attachments,
             debug=debug,
+            obsidian_mode=obsidian,
+            obsidian_auto_output=auto_output and obsidian,
         )
     elif source is Source.GITHUB_PR:
         dumper = GitHubPRDumper(
@@ -131,6 +145,8 @@ def main(
             quiet=quiet,
             verbose=verbose,
             debug=debug,
+            obsidian_mode=obsidian,
+            obsidian_auto_output=auto_output and obsidian,
         )
     else:
         dumper = SlackDumper(
@@ -144,10 +160,12 @@ def main(
         )
 
     resolved_output: Path | None = output
-    if auto_output:
+    if auto_output and not obsidian:
         resolved_output = Path(dumper.default_filename())
 
-    if resolved_output and source is Source.CONFLUENCE:
+    if obsidian:
+        pass  # dumper handles its own path resolution and parent dir creation
+    elif resolved_output and source is Source.CONFLUENCE:
         resolved_output.mkdir(parents=True, exist_ok=True)
     elif resolved_output:
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +200,25 @@ def _emit_shell_alias(shell: str | None) -> None:
         return
 
     click.echo("alias ctx ctxd")
+
+
+def _validate_obsidian_flags(
+    source: Source,
+    output: Path | None,
+    auto_output: bool,
+    recursive: bool,
+    fmt: str,
+) -> None:
+    if source not in (Source.CONFLUENCE, Source.JIRA):
+        raise click.UsageError("--obsidian only supports Confluence and Jira URLs")
+    if output is None and not auto_output:
+        raise click.UsageError("--obsidian requires -o <file> or -O")
+    if recursive:
+        raise click.UsageError(
+            "--obsidian does not support -r/--recursive (export pages individually)"
+        )
+    if fmt != "md":
+        raise click.UsageError("--obsidian requires markdown format (incompatible with -f text)")
 
 
 def _validate_confluence_flags(

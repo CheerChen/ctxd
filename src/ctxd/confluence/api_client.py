@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 
 import requests
@@ -15,6 +17,7 @@ class ConfluenceClient:
         self.session.headers.update({"Accept": "application/json"})
         self._user_cache: dict[str, str] = {}
         self._space_cache: dict[str, str] = {}
+        self._media_token_cache: dict[str, tuple[str, str, str]] = {}
 
     def get_user_display_name(self, account_id: str) -> str:
         if account_id in self._user_cache:
@@ -166,11 +169,39 @@ class ConfluenceClient:
 
         return all_children
 
-    def download_attachment(self, download_link: str) -> bytes:
-        if download_link.startswith("/"):
-            url = f"{self.base_url}/wiki{download_link}"
-        else:
-            url = f"{self.base_url}/wiki/{download_link}"
-        resp = self.session.get(url, timeout=30)
+    def download_attachment(self, file_id: str, page_id: str) -> bytes:
+        # The legacy /wiki/download/attachments/... endpoint rejects API token
+        # Basic auth with 401 (its WWW-Authenticate hint demands OAuth). The
+        # working path is the Atlassian Media Service, which accepts a per-page
+        # JWT mediaToken issued by the v1 REST API.
+        token, client_id, collection_id = self._get_media_token(page_id)
+        url = (
+            f"https://api.media.atlassian.com/file/{file_id}/binary"
+            f"?token={token}&client={client_id}&collection={collection_id}"
+        )
+        resp = requests.get(url, timeout=60)
         resp.raise_for_status()
         return resp.content
+
+    def _get_media_token(self, page_id: str) -> tuple[str, str, str]:
+        cached = self._media_token_cache.get(page_id)
+        if cached is not None:
+            return cached
+
+        url = f"{self.base_url}/wiki/rest/api/content/{page_id}?expand=body.view.mediaToken"
+        resp = self.session.get(url, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        mt = (data.get("body", {}).get("view", {}) or {}).get("mediaToken") or {}
+        token = mt.get("token")
+        collection_ids = mt.get("collectionIds") or []
+        if not token or not collection_ids:
+            raise RuntimeError(f"No mediaToken returned for page {page_id}")
+
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        client_id = json.loads(base64.urlsafe_b64decode(payload_b64))["iss"]
+
+        result = (token, client_id, collection_ids[0])
+        self._media_token_cache[page_id] = result
+        return result
