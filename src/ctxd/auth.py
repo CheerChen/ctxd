@@ -68,6 +68,10 @@ def _resolve(key: str) -> str:
     return _load_config().get(key, "")
 
 
+def get_setting(key: str, default: str = "") -> str:
+    return _resolve(key) or default
+
+
 def _reset_cache_for_tests() -> None:
     global _config_cache, _perms_warned
     _config_cache = None
