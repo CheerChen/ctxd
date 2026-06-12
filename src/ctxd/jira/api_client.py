@@ -6,6 +6,9 @@ from typing import Any
 
 import requests
 
+from ctxd.http_retry import mount_retry
+from ctxd.profiling import instrument_session
+
 
 class JiraClient:
     def __init__(self, base_url: str, email: str, api_token: str):
@@ -13,6 +16,8 @@ class JiraClient:
         self.session = requests.Session()
         self.session.auth = (email, api_token)
         self.session.headers.update({"Accept": "application/json"})
+        mount_retry(self.session)
+        instrument_session(self.session, "jira")
 
     def get_issue(self, issue_key: str) -> dict[str, Any]:
         url = f"{self.base_url}/rest/api/2/issue/{issue_key}"
