@@ -131,8 +131,6 @@ brew install gh
 gh auth login
 ```
 
-Diff generation uses the GitHub API (`gh pr diff` and `/pulls/{n}/files`), so it works from any working directory — no local clone of the target repo required.
-
 ### Usage
 
 ```bash
@@ -140,17 +138,6 @@ ctxd https://github.com/owner/repo/pull/123
 ctxd https://github.com/owner/repo/pull/123 -o pr-123.md
 ctxd -O https://github.com/owner/repo/pull/123
 ```
-
-### Output structure
-
-The generated markdown has the following top-level sections:
-
-- `## Reviews` — each review with `@author`, `**STATE**` (APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED), submission timestamp, and body. Empty-body reviews (e.g. bare approvals) are preserved.
-- `## Inline Review Comments` — inline code comments grouped by file, rendered as `@user [SIDE] L{start}-{end} (timestamp):` with LEFT/RIGHT diff side and multi-line ranges.
-- `## Timeline Comments` — issue-level comments on the PR conversation.
-- `## Git Diff` — code diff (mode controlled by `-d`).
-
-All reviews and comments include ISO-8601 timestamps (with timezone) from the GitHub API. Bot-authored content is **kept by default** — pass `--no-bots` to drop reviews/comments from `pr-agent`, `devin-ai-integration`, `coderabbitai`, etc.
 
 ### Options
 
@@ -265,13 +252,7 @@ Export full Jira issue content (description, comments, custom fields).
 
 ### Prerequisites
 
-Shares authentication with Confluence — configure via environment variables **or** `~/.config/ctxd/config` (see the [Confluence section](#confluence) for the full config-file setup, including `chmod 600`):
-
-```bash
-export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
-export CONFLUENCE_EMAIL="you@example.com"
-export CONFLUENCE_API_TOKEN="your-token"
-```
+Shares authentication with Confluence (see above), so the same config applies. Jira also supports `--debug` for raw HTML saving.
 
 ### Usage
 
@@ -279,12 +260,6 @@ export CONFLUENCE_API_TOKEN="your-token"
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--debug` | Save raw HTML (`.debug.html`) for troubleshooting conversion issues |
 
 ---
 
