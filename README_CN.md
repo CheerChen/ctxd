@@ -8,12 +8,12 @@
 
 `ctxd` 是一个 CLI，用来把 GitHub PR、Slack thread、Confluence 页面、Jira issue 导出成干净、可复查、可落盘的 Markdown 或 text。
 
-它特别适合 connector 常常做不好的那部分事情：
+它适合：
 
 - 一次性拉很多上下文
 - 把结果稳定写到磁盘
 - 复用同一条命令
-- 减少模型内反复做 tool selection 的开销
+- 减少模型内 connector 反复做 tool selection 的开销
 
 ## Agent skill（推荐）
 
@@ -44,6 +44,21 @@ mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
 | 拉长 Slack thread 供后续总结 | 最适合 | 往往会重复抓取和解析 |
 | 把 PR review 上下文落成文件 | 最适合 | 通常没有持久 artifact |
 
+## 快速示例
+
+```bash
+# GitHub PR -> 自动生成 markdown 文件
+ctxd -O https://github.com/owner/repo/pull/123
+
+# Slack thread -> 输出到 stdout
+ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
+
+# Confluence 页面树 + 图片 -> 导出到本地目录
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
+
+# Jira issue -> Obsidian-ready note
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
+```
 ## 支持的数据源
 
 | 来源 | URL 模式 |
@@ -110,22 +125,6 @@ gh auth status
 
 ---
 
-## 快速示例
-
-```bash
-# GitHub PR -> 自动生成 markdown 文件
-ctxd -O https://github.com/owner/repo/pull/123
-
-# Slack thread -> 输出到 stdout
-ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
-
-# Confluence 页面树 + 图片 -> 导出到本地目录
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
-
-# Jira issue -> Obsidian-ready note
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
-```
-
 ## GitHub PR
 
 导出 PR 的元数据、评审、行内评论、时间线评论和代码变更。
@@ -139,8 +138,6 @@ brew install gh
 gh auth login
 ```
 
-Diff 生成走 GitHub API（`gh pr diff` 与 `/pulls/{n}/files`），可在任意工作目录下运行——不需要本地 clone 目标仓库。
-
 ### 使用
 
 ```bash
@@ -148,17 +145,6 @@ ctxd https://github.com/owner/repo/pull/123
 ctxd https://github.com/owner/repo/pull/123 -o pr-123.md
 ctxd -O https://github.com/owner/repo/pull/123
 ```
-
-### 输出结构
-
-生成的 Markdown 包含以下顶级小节：
-
-- `## Reviews` — 每条评审含 `@author`、`**STATE**`（APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED）、提交时间戳和正文。空正文评审（如裸 approve）也会保留。
-- `## Inline Review Comments` — 行内代码评论按文件分组，渲染为 `@user [SIDE] L{start}-{end} (timestamp):`，带 LEFT/RIGHT 侧和多行范围。
-- `## Timeline Comments` — PR 对话区的 issue-level 评论。
-- `## Git Diff` — 代码 diff（模式由 `-d` 控制）。
-
-所有评审和评论都带来自 GitHub API 的 ISO-8601 时间戳（含时区）。**默认保留 bot 作者的内容** —— 传 `--no-bots` 可过滤掉 `pr-agent`、`devin-ai-integration`、`coderabbitai` 等 bot 的评审/评论。
 
 ### 专属参数
 
@@ -273,13 +259,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
 ### 前置条件
 
-与 Confluence 共享认证 —— 可通过环境变量**或** `~/.config/ctxd/config` 配置（完整的配置文件写法及 `chmod 600` 说明见上面的 [Confluence 章节](#confluence)）：
-
-```bash
-export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
-export CONFLUENCE_EMAIL="you@example.com"
-export CONFLUENCE_API_TOKEN="your-token"
-```
+与 Confluence 共享认证。配置方式同 Confluence（见上）。Jira 也支持 `--debug` 来保存原始 HTML。
 
 ### 使用
 
@@ -287,12 +267,6 @@ export CONFLUENCE_API_TOKEN="your-token"
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
-
-### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `--debug` | 保存原始 HTML（`.debug.html`）用于排查转换问题 |
 
 ---
 
