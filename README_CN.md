@@ -1,8 +1,48 @@
 # ctxd
 
-统一的上下文导出工具，服务于 LLM 工作流。
+把工作 URL 变成适合喂给 LLM 的 Markdown。
 
 **📖 [English Documentation](README.md)**
+
+![ctxd 总览](assets/ctxd-overview.svg)
+
+`ctxd` 是一个 CLI，用来把 GitHub PR、Slack thread、Confluence 页面、Jira issue 导出成干净、可复查、可落盘的 Markdown 或 text。
+
+它特别适合 connector 常常做不好的那部分事情：
+
+- 一次性拉很多上下文
+- 把结果稳定写到磁盘
+- 复用同一条命令
+- 减少模型内反复做 tool selection 的开销
+
+## Agent skill（推荐）
+
+ctxd 自带配套 skill，位于 [skills/ctxd/SKILL.md](skills/ctxd/SKILL.md)，可同时用于 **Claude Code** 和 **Codex CLI**。它会让 agent 在对话里看到受支持的 URL 时优先使用 `ctxd`，而不是退回到聊天式抓取或模型内 connector。
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
+
+# Codex CLI
+mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
+```
+
+这个 skill 假设下方的[必要配置](#必要配置)已经完成。如果凭证缺失，agent 会先告诉你缺哪一个 key 或登录态，再尝试抓取。
+
+## 为什么用 ctxd
+
+- **CLI 优先，不是聊天优先**：一条命令生成稳定 artifact，便于检查、diff、归档、继续喂给任意模型。
+- **批量导出是第一公民**：PR、Slack thread、Confluence page tree、Jira issue 都是“整份上下文”导出，而不是多轮零碎抓取。
+- **评论和元数据完整保留**：review、inline comments、时间戳、附件、页面元数据、自定义字段都不会丢。
+- **适合 agent workflow**：`0.4.0` 起支持全源并发拉取，并带 `--profile`、`--max-concurrency`。
+
+## 什么时候 CLI 比 connector 更合适
+
+| 场景 | `ctxd` CLI | 模型内 connector |
+|--------|--------|--------|
+| 导出整棵 Confluence 页面树 | 最适合 | 往往需要很多次工具调用 |
+| 拉长 Slack thread 供后续总结 | 最适合 | 往往会重复抓取和解析 |
+| 把 PR review 上下文落成文件 | 最适合 | 通常没有持久 artifact |
 
 ## 支持的数据源
 
@@ -29,17 +69,30 @@ cd ctxd
 uv sync --group dev
 ```
 
-## Shell 别名
+## 必要配置
+
+agent 真正能用 `ctxd` 取数，前提是认证已经配好。
+
+配置文件：
 
 ```bash
-# zsh / bash
-eval "$(ctxd init zsh)"
-
-# fish
-ctxd init fish | source
+~/.config/ctxd/config
 ```
 
-配置后可用 `ctx` 代替 `ctxd`。
+常见配置项：
+
+```bash
+SLACK_TOKEN=xoxp-...
+CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+CONFLUENCE_EMAIL=you@example.com
+CONFLUENCE_API_TOKEN=your-token
+```
+
+GitHub PR 还依赖 `gh`，所以也要确保 gh 已经登录：
+
+```bash
+gh auth status
+```
 
 ## 通用参数
 
@@ -50,10 +103,28 @@ ctxd init fish | source
 | `-f, --format text\|md` | 输出格式（默认 `md`） |
 | `-q, --quiet` | 静默模式（stderr 非 TTY 时自动启用） |
 | `-v, --verbose` | 详细日志 |
+| `--profile` | 打印 stage / HTTP / subprocess 耗时摘要 |
+| `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
 
 参数可以放在 URL 前后（如 `ctxd -q <url>` 和 `ctxd <url> -q` 均可）。
 
 ---
+
+## 快速示例
+
+```bash
+# GitHub PR -> 自动生成 markdown 文件
+ctxd -O https://github.com/owner/repo/pull/123
+
+# Slack thread -> 输出到 stdout
+ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
+
+# Confluence 页面树 + 图片 -> 导出到本地目录
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
+
+# Jira issue -> Obsidian-ready note
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
+```
 
 ## GitHub PR
 
@@ -222,6 +293,17 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 | 参数 | 说明 |
 |------|------|
 | `--debug` | 保存原始 HTML（`.debug.html`）用于排查转换问题 |
+
+---
+
+## Performance
+
+| 场景 | 优化前 | 优化后 | 提升 |
+|------|------:|------:|------:|
+| Slack thread | 9.09s | 1.61s | 82.3% |
+| Confluence 单页 + 图片 | 1.88s | 1.74s | 7.4% |
+| Confluence 递归 + 图片 | 27.13s | 4.04s | 85.1% |
+| GitHub PR | 6.75s | 4.15s | 38.5% |
 
 ## 许可证
 

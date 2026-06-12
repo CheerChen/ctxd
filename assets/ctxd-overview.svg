@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">ctxd overview</title>
+  <desc id="desc">Overview diagram showing work URLs exported by ctxd into LLM-ready markdown.</desc>
+  <rect width="1200" height="520" fill="#f6f1e8"/>
+  <rect x="40" y="40" width="1120" height="440" rx="28" fill="#fffaf2" stroke="#1f2937" stroke-width="3"/>
+
+  <text x="70" y="95" font-family="Menlo, Monaco, Consolas, monospace" font-size="34" font-weight="700" fill="#111827">
+    ctxd: turn work URLs into LLM-ready markdown
+  </text>
+  <text x="70" y="132" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#4b5563">
+    One CLI for GitHub PRs, Slack threads, Confluence, and Jira
+  </text>
+
+  <rect x="70" y="180" width="260" height="210" rx="22" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+  <text x="95" y="220" font-family="Menlo, Monaco, Consolas, monospace" font-size="22" font-weight="700" fill="#312e81">Input</text>
+  <text x="95" y="272" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">GitHub PR</text>
+  <text x="95" y="304" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">Slack thread</text>
+  <text x="95" y="336" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">Confluence</text>
+  <text x="95" y="368" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">Jira</text>
+
+  <rect x="470" y="150" width="260" height="270" rx="22" fill="#ecfeff" stroke="#0f766e" stroke-width="3"/>
+  <text x="558" y="210" text-anchor="middle" font-family="Menlo, Monaco, Consolas, monospace" font-size="28" font-weight="700" fill="#134e4a">ctxd</text>
+  <text x="505" y="272" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">parallel fetch</text>
+  <text x="505" y="314" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">comments + metadata</text>
+  <text x="505" y="356" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">markdown / text</text>
+
+  <rect x="870" y="180" width="250" height="210" rx="22" fill="#ecfccb" stroke="#3f6212" stroke-width="3"/>
+  <text x="895" y="220" font-family="Menlo, Monaco, Consolas, monospace" font-size="22" font-weight="700" fill="#365314">Output</text>
+  <text x="895" y="272" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">LLM-ready markdown</text>
+  <text x="895" y="304" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">stable files on disk</text>
+  <text x="895" y="336" font-family="Menlo, Monaco, Consolas, monospace" font-size="18" fill="#111827">easy to reuse</text>
+
+  <path d="M330 285 L470 285" stroke="#111827" stroke-width="4" fill="none"/>
+  <polygon points="470,285 454,276 454,294" fill="#111827"/>
+  <path d="M730 285 L870 285" stroke="#111827" stroke-width="4" fill="none"/>
+  <polygon points="870,285 854,276 854,294" fill="#111827"/>
+</svg>

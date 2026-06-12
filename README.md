@@ -1,8 +1,56 @@
 # ctxd
 
-Unified context dumper for LLM workflows.
+Turn work URLs into LLM-ready Markdown.
 
 **📖 [中文文档](README_CN.md)**
+
+![ctxd overview](assets/ctxd-overview.svg)
+
+GitHub PRs, Slack threads, Confluence pages, and Jira issues — one command, one Markdown file you can save, diff, or feed to a model.
+
+## Agent skill (recommended)
+
+ctxd ships a companion skill at [skills/ctxd/SKILL.md](skills/ctxd/SKILL.md) that works with both **Claude Code** and **Codex CLI**. It teaches the agent to reach for `ctxd` whenever a supported URL appears in the conversation, instead of falling back to chat-style fetching or in-model connectors.
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
+
+# Codex CLI
+mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
+```
+
+The skill assumes [Required config](#required-config) is already set up — if credentials are missing, the agent will tell you which key it needs before attempting a fetch.
+
+## Why ctxd
+
+- **CLI-first, not chat-first** — one command produces a stable Markdown artifact you can inspect, diff, archive, or feed into any model. No drip-feeding through many tool calls.
+- **Comments and metadata stay attached** — PR reviews and inline threads, Slack threading, Confluence attachments and page metadata, Jira custom fields all preserved.
+- **Bulk export is the default** — page trees, long threads, heavy PRs come out as one file. Parallel fetch across all sources (see [Performance](#performance) for numbers).
+
+## When CLI beats connectors
+
+| Situation | `ctxd` CLI | In-model connector |
+|--------|--------|--------|
+| Export a whole Confluence page tree | Best fit | Usually many tool calls |
+| Dump a long Slack thread for later summarization | Best fit | Usually repeated fetch + resolution |
+| Save a PR review artifact to disk | Best fit | Usually no persistent artifact |
+
+## Quick examples
+
+```bash
+# GitHub PR -> markdown file
+ctxd -O https://github.com/owner/repo/pull/123
+
+# Slack thread -> stdout
+ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
+
+# Confluence page tree with images -> local directory
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
+
+# Jira issue -> Obsidian-ready note
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
+```
 
 ## Supported Sources
 
@@ -29,17 +77,30 @@ cd ctxd
 uv sync --group dev
 ```
 
-## Shell Alias
+## Required config
+
+Before an agent can actually fetch anything, the relevant auth must already exist.
+
+Config file:
 
 ```bash
-# zsh / bash
-eval "$(ctxd init zsh)"
-
-# fish
-ctxd init fish | source
+~/.config/ctxd/config
 ```
 
-This enables the `ctx` shorthand for `ctxd`.
+Typical keys:
+
+```bash
+SLACK_TOKEN=xoxp-...
+CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+CONFLUENCE_EMAIL=you@example.com
+CONFLUENCE_API_TOKEN=your-token
+```
+
+GitHub PR export uses `gh`, so make sure this is valid too:
+
+```bash
+gh auth status
+```
 
 ## Global Options
 
@@ -50,6 +111,8 @@ This enables the `ctx` shorthand for `ctxd`.
 | `-f, --format text\|md` | Output format (default: `md`) |
 | `-q, --quiet` | Suppress progress logs (auto-enabled when stderr is not a TTY) |
 | `-v, --verbose` | Verbose logging |
+| `--profile` | Print stage / HTTP / subprocess timing summary |
+| `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
 
 Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
 
@@ -225,54 +288,14 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 
 ---
 
-## Obsidian mode
+## Performance
 
-Export a Confluence page or Jira issue as a single Markdown note with YAML frontmatter, suitable for dropping into an Obsidian vault. The note's `{source}_url` lets any later tooling (including a re-run of `ctxd`) recover the origin URL.
-
-### Usage
-
-```bash
-# Write to an explicit path
-ctxd https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title --obsidian -o ~/vault/notes/note.md
-
-# Auto-name from remote title, written to CWD
-ctxd https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title --obsidian -O
-
-# Jira works the same way
-ctxd https://your-site.atlassian.net/browse/PROJ-1 --obsidian -O
-```
-
-The output starts with:
-
-```yaml
----
-confluence_url: https://your-site.atlassian.net/wiki/spaces/X/pages/123/Title
-confluence_title: Title
----
-
-# Title
-
-## Metadata
-...
-```
-
-### Behavior
-
-- **Sources**: Confluence and Jira only. GitHub PR / Slack URLs are rejected.
-- **Output**: requires `-o <file>` or `-O`. Naked `--obsidian` (no target) is rejected.
-- **Auto-naming (`-O`)**: derived from the remote title with Obsidian-link-sensitive characters (`[`, `]`, `#`, `^`, `|`) stripped, plus filesystem-safe cleanup. Jira titles become `KEY summary.md`.
-- **Attachments (Confluence)**: referenced images are downloaded automatically into `<attachments-base>/<ATTACHMENTS_DIR>/{page_id}-*` and the body's image references are rewritten to match. `<attachments-base>` is the nearest ancestor directory containing `.obsidian/` (vault root) when one exists; otherwise it falls back to the output file's parent directory. Stale files matching the same `{page_id}-*` prefix are cleaned up so the directory always reflects the current page.
-- **`--all-attachments`**: still opt-in; downloads non-image attachments too.
-- **`-r/--recursive`**: rejected — Obsidian mode is one-page-per-note by design.
-- **`-f text`**: rejected — frontmatter requires Markdown output.
-
-### Configuration
-
-Reuses the existing `~/.config/ctxd/config`:
-
-```
-ATTACHMENTS_DIR=assets   # relative to the output file's directory; default: assets
-```
+| Scenario | Baseline | Post-opt | Improvement |
+|--------|--------:|--------:|--------:|
+| Slack thread | 9.09s | 1.61s | 82.3% |
+| Confluence single page + image | 1.88s | 1.74s | 7.4% |
+| Confluence recursive + images | 27.13s | 4.04s | 85.1% |
+| GitHub PR | 6.75s | 4.15s | 38.5% |
 
 ## License
 
