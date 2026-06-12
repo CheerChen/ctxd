@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 from ctxd.auth import ensure_github_auth
 from ctxd.dumpers.base import BaseDumper
+from ctxd.profiling import timed
 from ctxd.router import parse_github_pr_url
 
 
@@ -198,14 +199,16 @@ class GitHubPRDumper(BaseDumper):
 
     def _gh_json(self, args: list[str]) -> dict:
         cmd = ["gh", *args]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        with timed("subprocess.gh"):
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "gh command failed")
         return json.loads(proc.stdout)
 
     def _gh_api_paginate(self, path: str) -> list[dict]:
         cmd = ["gh", "api", "--paginate", "--slurp", path]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        with timed("subprocess.gh"):
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             return []
 
@@ -306,7 +309,8 @@ class GitHubPRDumper(BaseDumper):
 
     def _fetch_unified_diff(self) -> str:
         cmd = ["gh", "pr", "diff", self.pr_number, "--repo", f"{self.owner}/{self.repo}"]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        with timed("subprocess.gh"):
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             return ""
         return proc.stdout

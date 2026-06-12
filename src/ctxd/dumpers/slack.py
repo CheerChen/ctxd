@@ -11,6 +11,8 @@ import requests
 
 from ctxd.auth import get_slack_token
 from ctxd.dumpers.base import BaseDumper
+from ctxd.http_retry import mount_retry
+from ctxd.profiling import instrument_session
 from ctxd.router import parse_slack_thread_url
 
 
@@ -30,6 +32,9 @@ class SlackDumper(BaseDumper):
         self.raw = raw
         self.token = ""
         self.session = requests.Session()
+        # Slack Web API uses POST for idempotent reads; include POST in retry set.
+        mount_retry(self.session, methods=frozenset(["GET", "HEAD", "POST"]))
+        instrument_session(self.session, "slack")
 
     def default_filename(self) -> str:
         channel_id, thread_ts = parse_slack_thread_url(self.url)

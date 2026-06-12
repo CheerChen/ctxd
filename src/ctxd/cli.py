@@ -10,7 +10,9 @@ from click.core import ParameterSource
 
 from ctxd import __version__
 from ctxd.auth import AuthError
+from ctxd.concurrency import configure as configure_concurrency
 from ctxd.dumpers import ConfluenceDumper, GitHubPRDumper, JiraDumper, SlackDumper
+from ctxd.profiling import emit_report, enable_profiling
 from ctxd.router import Source, detect
 
 
@@ -37,6 +39,11 @@ from ctxd.router import Source, detect
 @click.option("--obsidian", is_flag=True, default=False,
               help="Confluence/Jira: write an Obsidian note (frontmatter + body); requires -o or -O")
 @click.option("--debug", is_flag=True, default=False)
+@click.option("--profile", "profile", is_flag=True, default=False,
+              help="Print HTTP/subprocess/stage timing breakdown to stderr after dump")
+@click.option("--max-concurrency", "max_concurrency", type=click.IntRange(1, 32),
+              default=5, show_default=True,
+              help="Max concurrent HTTP / subprocess fan-out (Confluence pages, gh API)")
 @click.version_option(__version__, prog_name="ctxd")
 @click.pass_context
 def main(
@@ -58,6 +65,8 @@ def main(
     all_attachments: bool,
     obsidian: bool,
     debug: bool,
+    profile: bool,
+    max_concurrency: int,
 ) -> None:
     """Unified context dumper for GitHub PR, Slack thread, Confluence, and Jira.
 
@@ -68,6 +77,10 @@ def main(
     if url_or_cmd == "init":
         _emit_shell_alias(shell)
         return
+
+    if profile:
+        enable_profiling()
+    configure_concurrency(max_concurrency)
 
     if shell:
         raise click.UsageError(f"Unexpected argument: {shell}")
@@ -173,11 +186,14 @@ def main(
     dumper.output = str(resolved_output) if resolved_output else None
 
     try:
-        dumper.dump()
-    except AuthError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        try:
+            dumper.dump()
+        except AuthError as exc:
+            raise click.ClickException(str(exc)) from exc
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+    finally:
+        emit_report()
 
 
 def _stderr_is_tty() -> bool:

@@ -6,6 +6,8 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from ctxd.profiling import timed
+
 
 @dataclass
 class BaseDumper(ABC):
@@ -33,8 +35,10 @@ class BaseDumper(ABC):
 
     def dump(self) -> None:
         self.validate_auth()
-        raw = self.fetch()
-        content = self.transform(raw)
+        with timed("stage.fetch"):
+            raw = self.fetch()
+        with timed("stage.transform"):
+            content = self.transform(raw)
 
         if self.output:
             with open(self.output, "w", encoding="utf-8") as handle:
