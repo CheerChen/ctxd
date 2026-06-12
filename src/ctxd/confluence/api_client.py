@@ -8,6 +8,9 @@ from typing import Any
 
 import requests
 
+from ctxd.http_retry import mount_retry
+from ctxd.profiling import instrument_session
+
 
 class ConfluenceClient:
     def __init__(self, base_url: str, email: str, api_token: str):
@@ -15,6 +18,12 @@ class ConfluenceClient:
         self.session = requests.Session()
         self.session.auth = (email, api_token)
         self.session.headers.update({"Accept": "application/json"})
+        mount_retry(self.session)
+        instrument_session(self.session, "confluence")
+        # Media downloads use URL-embedded tokens, not Basic auth.
+        self._media_session = requests.Session()
+        mount_retry(self._media_session)
+        instrument_session(self._media_session, "confluence_media")
         self._user_cache: dict[str, str] = {}
         self._space_cache: dict[str, str] = {}
         self._media_token_cache: dict[str, tuple[str, str, str]] = {}
@@ -179,7 +188,7 @@ class ConfluenceClient:
             f"https://api.media.atlassian.com/file/{file_id}/binary"
             f"?token={token}&client={client_id}&collection={collection_id}"
         )
-        resp = requests.get(url, timeout=60)
+        resp = self._media_session.get(url, timeout=60)
         resp.raise_for_status()
         return resp.content
 

@@ -13,6 +13,7 @@ from ctxd.confluence.api_client import ConfluenceClient
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import parse_confluence_url
 from ctxd.dumpers.base import BaseDumper
+from ctxd.profiling import timed
 
 
 class ConfluenceDumper(BaseDumper):
@@ -52,9 +53,11 @@ class ConfluenceDumper(BaseDumper):
             raise RuntimeError("Confluence client not initialized")
 
         _, page_id = parse_confluence_url(self.url)
-        root_page = self.client.get_page(page_id)
+        with timed("confluence.get_root_page"):
+            root_page = self.client.get_page(page_id)
         if self.recursive:
-            descendants = self.client.get_descendants(page_id)
+            with timed("confluence.get_descendants"):
+                descendants = self.client.get_descendants(page_id)
             pages = [root_page] + descendants
         else:
             pages = [root_page]
@@ -93,10 +96,12 @@ class ConfluenceDumper(BaseDumper):
             return
 
         self.validate_auth()
-        raw = self.fetch()
+        with timed("stage.fetch"):
+            raw = self.fetch()
 
         if not self.output:
-            content = self.transform(raw)
+            with timed("stage.transform"):
+                content = self.transform(raw)
             sys.stdout.write(content)
             return
 
@@ -109,13 +114,14 @@ class ConfluenceDumper(BaseDumper):
         global_attachment_pool: dict[str, str] = {}
         success = 0
 
-        for page in raw["pages"]:
-            if self._export_page(
-                page_data=page,
-                output_dir=output_path,
-                global_attachment_pool=global_attachment_pool,
-            ):
-                success += 1
+        with timed("stage.export_pages"):
+            for page in raw["pages"]:
+                if self._export_page(
+                    page_data=page,
+                    output_dir=output_path,
+                    global_attachment_pool=global_attachment_pool,
+                ):
+                    success += 1
 
         self.log(f"✅ Export completed: {success}/{len(raw['pages'])} pages")
         self.log(f"📁 Output: {output_path}")
@@ -240,21 +246,24 @@ class ConfluenceDumper(BaseDumper):
 
             image_map: dict[str, str] = {}
             if self.include_images:
-                image_map = self._download_page_images(
-                    page_id=page_id,
-                    page_html=html_content,
-                    page_dir=page_dir,
-                    global_attachment_pool=global_attachment_pool,
-                )
+                with timed("stage.attachments"):
+                    image_map = self._download_page_images(
+                        page_id=page_id,
+                        page_html=html_content,
+                        page_dir=page_dir,
+                        global_attachment_pool=global_attachment_pool,
+                    )
 
             base_url = self.client.base_url if self.client else None
             metadata_block = self._build_metadata_block(page_data)
-            markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
+            with timed("stage.transform"):
+                markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
             offset = 2 + metadata_block.count("\n")
             marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
             markdown = f"# {title}\n\n{metadata_block}{markdown}"
 
-            comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+            with timed("stage.comments"):
+                comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
             if comments_md:
                 markdown += f"\n\n---\n\n## Comments\n\n{comments_md}"
 

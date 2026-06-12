@@ -28,3 +28,6 @@ dist/
 
 # Project output
 output/
+
+# Bench artifacts (from scripts/bench.sh)
+.bench-out*/
