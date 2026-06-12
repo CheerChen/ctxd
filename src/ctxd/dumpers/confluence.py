@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from ctxd.auth import ensure_confluence_auth
+from ctxd.concurrency import parallel_map
 from ctxd.confluence.api_client import ConfluenceClient
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import parse_confluence_url
@@ -112,16 +114,19 @@ class ConfluenceDumper(BaseDumper):
             raise RuntimeError("Confluence client not initialized")
 
         global_attachment_pool: dict[str, str] = {}
-        success = 0
+        pool_lock = threading.Lock()
 
         with timed("stage.export_pages"):
-            for page in raw["pages"]:
-                if self._export_page(
+            results = parallel_map(
+                lambda page: self._export_page(
                     page_data=page,
                     output_dir=output_path,
                     global_attachment_pool=global_attachment_pool,
-                ):
-                    success += 1
+                    pool_lock=pool_lock,
+                ),
+                raw["pages"],
+            )
+        success = sum(1 for ok in results if ok)
 
         self.log(f"✅ Export completed: {success}/{len(raw['pages'])} pages")
         self.log(f"📁 Output: {output_path}")
@@ -219,6 +224,7 @@ class ConfluenceDumper(BaseDumper):
         page_data: dict,
         output_dir: Path,
         global_attachment_pool: dict[str, str],
+        pool_lock: threading.Lock,
     ) -> bool:
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
@@ -252,6 +258,7 @@ class ConfluenceDumper(BaseDumper):
                         page_html=html_content,
                         page_dir=page_dir,
                         global_attachment_pool=global_attachment_pool,
+                        pool_lock=pool_lock,
                     )
 
             base_url = self.client.base_url if self.client else None
@@ -278,26 +285,33 @@ class ConfluenceDumper(BaseDumper):
         if self.client is None:
             return ""
         resolve_user = self.client.get_user_display_name
+        client = self.client
+
+        def attach_children(comments: list[dict], comment_type: str) -> None:
+            if not comments:
+                return
+            results = parallel_map(
+                lambda c: client.get_comment_children(c["id"], comment_type=comment_type),
+                comments,
+            )
+            for comment, children in zip(comments, results):
+                if children:
+                    comment["_children"] = children
+
         parts: list[str] = []
         try:
-            inline_comments = self.client.get_inline_comments(page_id)
+            inline_comments = client.get_inline_comments(page_id)
+            attach_children(inline_comments, "inline")
             if inline_comments:
-                for comment in inline_comments:
-                    children = self.client.get_comment_children(comment["id"], comment_type="inline")
-                    if children:
-                        comment["_children"] = children
                 parts.append("### Inline Comments\n")
                 parts.append(comments_to_markdown(inline_comments, resolve_user=resolve_user, marker_line_map=marker_line_map))
         except Exception as exc:
             self.log(f"    ⚠ Failed to fetch inline comments for page {page_id}: {exc}")
 
         try:
-            footer_comments = self.client.get_footer_comments(page_id)
+            footer_comments = client.get_footer_comments(page_id)
+            attach_children(footer_comments, "footer")
             if footer_comments:
-                for comment in footer_comments:
-                    children = self.client.get_comment_children(comment["id"], comment_type="footer")
-                    if children:
-                        comment["_children"] = children
                 parts.append("### Footer Comments\n")
                 parts.append(comments_to_markdown(footer_comments, resolve_user=resolve_user))
         except Exception as exc:
@@ -311,6 +325,7 @@ class ConfluenceDumper(BaseDumper):
         page_html: str,
         page_dir: Path,
         global_attachment_pool: dict[str, str],
+        pool_lock: threading.Lock,
     ) -> dict[str, str]:
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
@@ -325,7 +340,8 @@ class ConfluenceDumper(BaseDumper):
                     attachment_map[filename] = attachment
 
             if attachment_map:
-                global_attachment_pool.update(attachment_map)
+                with pool_lock:
+                    global_attachment_pool.update(attachment_map)
 
             used_attachments: set[str]
             if self.all_attachments:
@@ -335,26 +351,44 @@ class ConfluenceDumper(BaseDumper):
 
             image_dir = page_dir / "images"
 
+            def resolve(filename: str) -> dict | None:
+                attachment = attachment_map.get(filename)
+                if attachment:
+                    return attachment
+                with pool_lock:
+                    return global_attachment_pool.get(filename)
+
+            download_targets: list[tuple[str, dict]] = []
             for filename in used_attachments:
                 if not self._is_image_file(filename):
                     continue
-                attachment = attachment_map.get(filename) or global_attachment_pool.get(filename)
+                attachment = resolve(filename)
                 if not attachment:
                     continue
-                file_id = attachment.get("fileId")
-                attachment_page_id = attachment.get("pageId") or page_id
-                if not file_id:
+                if not attachment.get("fileId"):
                     self.log(f"    ⚠ Skipping {filename}: no fileId in attachment metadata")
                     continue
+                download_targets.append((filename, attachment))
+
+            def download_one(target: tuple[str, dict]) -> tuple[str, bool]:
+                filename, attachment = target
                 try:
-                    content = self.client.download_attachment(file_id=file_id, page_id=attachment_page_id)
+                    content = self.client.download_attachment(
+                        file_id=attachment["fileId"],
+                        page_id=attachment.get("pageId") or page_id,
+                    )
                     local_path = image_dir / filename
                     local_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(local_path, "wb") as handle:
                         handle.write(content)
-                    image_map[filename] = f"images/{filename}"
+                    return filename, True
                 except Exception as exc:
                     self.log(f"    ⚠ Failed to download {filename}: {exc}")
+                    return filename, False
+
+            for filename, ok in parallel_map(download_one, download_targets):
+                if ok:
+                    image_map[filename] = f"images/{filename}"
 
             if image_map:
                 self.log(f"    ✓ Downloaded {len(image_map)} images")

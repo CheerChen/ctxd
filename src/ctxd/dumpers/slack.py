@@ -35,6 +35,10 @@ class SlackDumper(BaseDumper):
         # Slack Web API uses POST for idempotent reads; include POST in retry set.
         mount_retry(self.session, methods=frozenset(["GET", "HEAD", "POST"]))
         instrument_session(self.session, "slack")
+        # users.info / conversations.info are called per-message during transform;
+        # cache per-instance so a chatty thread doesn't hit the API N times per user.
+        self._user_cache: dict[str, dict] = {}
+        self._channel_name_cache: dict[str, str] = {}
 
     def default_filename(self) -> str:
         channel_id, thread_ts = parse_slack_thread_url(self.url)
@@ -154,11 +158,14 @@ class SlackDumper(BaseDumper):
         return messages
 
     def _get_user(self, user_id: str) -> dict:
+        cached = self._user_cache.get(user_id)
+        if cached is not None:
+            return cached
         try:
             payload = self._api_call("users.info", {"user": user_id})
             user = payload.get("user", {})
             profile = user.get("profile", {})
-            return {
+            result = {
                 "id": user.get("id", user_id),
                 "display_name": profile.get("display_name_normalized") or profile.get("display_name") or "",
                 "name": profile.get("real_name_normalized")
@@ -169,20 +176,27 @@ class SlackDumper(BaseDumper):
                 "is_bot": bool(user.get("is_bot", False)),
             }
         except Exception:
-            return {
+            result = {
                 "id": user_id,
                 "display_name": "",
                 "name": user_id,
                 "is_bot": False,
             }
+        self._user_cache[user_id] = result
+        return result
 
     def _get_channel_name(self, channel_id: str) -> str:
+        cached = self._channel_name_cache.get(channel_id)
+        if cached is not None:
+            return cached
         try:
             payload = self._api_call("conversations.info", {"channel": channel_id})
             channel = payload.get("channel", {})
-            return channel.get("name") or channel_id
+            name = channel.get("name") or channel_id
         except Exception:
-            return channel_id
+            name = channel_id
+        self._channel_name_cache[channel_id] = name
+        return name
 
     def _format_participant_lines(self, participants: list[str], markdown: bool) -> list[str]:
         lines: list[str] = []

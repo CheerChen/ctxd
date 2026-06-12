@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0]
+
+### Changed
+* **Parallel fetch across all sources** — every dumper now fans out its independent HTTP / subprocess work behind a single tunable cap (`--max-concurrency`, default 5):
+  * **Slack**: per-instance memoization of `users.info` / `conversations.info`. A thread with 5 unique participants used to fire ~45 lookups (one per message + mention); now ~5. On a 25-message thread this drops wall time from ~8.8s to ~1.6s (−82%) and HTTP calls from 45 to 7.
+  * **GitHub PR**: the 5 `gh` subprocess calls in `fetch()` (pr view, issue comments, review comments, reviews, diff) now run concurrently. Wall is now bounded by the slowest single call — typically `gh pr diff` — instead of the sum. On a heavy PR (124 comments, 95 reviews): ~6.8s → ~4.2s (−38%).
+  * **Confluence recursive**: page-level export loop runs concurrently; within each page, comment-children lookups and image-attachment downloads also fan out. On a 14-page sub-tree with images: ~26s → ~4s (−85%).
+
+### Added
+* **`--profile`** flag prints an HTTP / subprocess / stage timing table to stderr after the dump. Non-2xx responses are split into `http.<source>.4xx` / `5xx` buckets and urllib3 retry attempts surface as `http.<source>.retry`, so transient failures don't get buried in totals.
+* **`--max-concurrency N`** (1-32, default 5) caps the parallel fan-out. Lower it if a server is sensitive to bursts.
+* **Retry-After-aware retries** — Slack, Confluence (REST + Media), and Jira sessions now mount a shared `HTTPAdapter` with a urllib3 `Retry` policy that respects the `Retry-After` header on 429 / 5xx (3 retries, exponential backoff). No business-code changes required.
+* **`scripts/bench.sh`** — repeatable benchmark harness for the 4 representative scenarios (Slack thread, Confluence single + images, Confluence recursive + images, GitHub PR). URLs are injected via env vars; output goes to `.bench-out/` (gitignored).
+
+### Fixed
+* **Confluence media downloads now visible in profile / retried correctly**: `ConfluenceClient.download_attachment` previously used a bare `requests.get` which bypassed both instrumentation and the session-mounted retry policy. It now goes through a dedicated `_media_session` (kept separate because media URLs use embedded JWT tokens, not Basic auth), so media downloads count toward `http.confluence_media` and inherit Retry-After handling.
+* **Thread-safe Confluence caches**: `_user_cache` / `_space_cache` / `_media_token_cache` previously raced under concurrent page exports (two pages hitting the same author would each fire the `users.info` lookup). Replaced with a per-key locking pattern (`_locked_compute`) — different keys still fetch in parallel, the same key collapses to one HTTP call. On the 14-page benchmark this dropped duplicate fetches from +15 calls back to 0.
+
 ## [0.3.3]
 
 ### Added

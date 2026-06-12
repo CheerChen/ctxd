@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+import threading
+from typing import Any, Callable, TypeVar
 
 import requests
 
 from ctxd.http_retry import mount_retry
 from ctxd.profiling import instrument_session
+
+_T = TypeVar("_T")
 
 
 class ConfluenceClient:
@@ -27,32 +30,54 @@ class ConfluenceClient:
         self._user_cache: dict[str, str] = {}
         self._space_cache: dict[str, str] = {}
         self._media_token_cache: dict[str, tuple[str, str, str]] = {}
+        # Per-cache key-level locks so concurrent fetches for the SAME key
+        # collapse to one HTTP call, while different keys remain parallel.
+        self._cache_meta_lock = threading.Lock()
+        self._key_locks: dict[tuple[str, str], threading.Lock] = {}
+
+    def _locked_compute(
+        self,
+        cache: dict[str, _T],
+        key: str,
+        cache_name: str,
+        compute: Callable[[], _T],
+    ) -> _T:
+        if key in cache:
+            return cache[key]
+        with self._cache_meta_lock:
+            if key in cache:
+                return cache[key]
+            lock = self._key_locks.setdefault((cache_name, key), threading.Lock())
+        with lock:
+            if key in cache:
+                return cache[key]
+            value = compute()
+            cache[key] = value
+        return value
 
     def get_user_display_name(self, account_id: str) -> str:
-        if account_id in self._user_cache:
-            return self._user_cache[account_id]
-        try:
-            url = f"{self.base_url}/wiki/rest/api/user?accountId={account_id}"
-            resp = self.session.get(url, timeout=10)
-            resp.raise_for_status()
-            name = resp.json().get("displayName", account_id)
-        except Exception:
-            name = account_id
-        self._user_cache[account_id] = name
-        return name
+        def fetch() -> str:
+            try:
+                url = f"{self.base_url}/wiki/rest/api/user?accountId={account_id}"
+                resp = self.session.get(url, timeout=10)
+                resp.raise_for_status()
+                return resp.json().get("displayName", account_id)
+            except Exception:
+                return account_id
+
+        return self._locked_compute(self._user_cache, account_id, "user", fetch)
 
     def get_space_name(self, space_id: str) -> str:
-        if space_id in self._space_cache:
-            return self._space_cache[space_id]
-        try:
-            url = f"{self.base_url}/wiki/api/v2/spaces/{space_id}"
-            resp = self.session.get(url, timeout=10)
-            resp.raise_for_status()
-            name = resp.json().get("name", space_id)
-        except Exception:
-            name = space_id
-        self._space_cache[space_id] = name
-        return name
+        def fetch() -> str:
+            try:
+                url = f"{self.base_url}/wiki/api/v2/spaces/{space_id}"
+                resp = self.session.get(url, timeout=10)
+                resp.raise_for_status()
+                return resp.json().get("name", space_id)
+            except Exception:
+                return space_id
+
+        return self._locked_compute(self._space_cache, space_id, "space", fetch)
 
     def get_page(self, page_id: str) -> dict[str, Any]:
         url = f"{self.base_url}/wiki/api/v2/pages/{page_id}?body-format=storage"
@@ -193,24 +218,20 @@ class ConfluenceClient:
         return resp.content
 
     def _get_media_token(self, page_id: str) -> tuple[str, str, str]:
-        cached = self._media_token_cache.get(page_id)
-        if cached is not None:
-            return cached
+        def fetch() -> tuple[str, str, str]:
+            url = f"{self.base_url}/wiki/rest/api/content/{page_id}?expand=body.view.mediaToken"
+            resp = self.session.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            mt = (data.get("body", {}).get("view", {}) or {}).get("mediaToken") or {}
+            token = mt.get("token")
+            collection_ids = mt.get("collectionIds") or []
+            if not token or not collection_ids:
+                raise RuntimeError(f"No mediaToken returned for page {page_id}")
 
-        url = f"{self.base_url}/wiki/rest/api/content/{page_id}?expand=body.view.mediaToken"
-        resp = self.session.get(url, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        mt = (data.get("body", {}).get("view", {}) or {}).get("mediaToken") or {}
-        token = mt.get("token")
-        collection_ids = mt.get("collectionIds") or []
-        if not token or not collection_ids:
-            raise RuntimeError(f"No mediaToken returned for page {page_id}")
+            payload_b64 = token.split(".")[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            client_id = json.loads(base64.urlsafe_b64decode(payload_b64))["iss"]
+            return (token, client_id, collection_ids[0])
 
-        payload_b64 = token.split(".")[1]
-        payload_b64 += "=" * (-len(payload_b64) % 4)
-        client_id = json.loads(base64.urlsafe_b64decode(payload_b64))["iss"]
-
-        result = (token, client_id, collection_ids[0])
-        self._media_token_cache[page_id] = result
-        return result
+        return self._locked_compute(self._media_token_cache, page_id, "media_token", fetch)

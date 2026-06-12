@@ -6,8 +6,10 @@ import json
 import re
 import subprocess
 from collections import OrderedDict
+from typing import Callable
 
 from ctxd.auth import ensure_github_auth
+from ctxd.concurrency import parallel_map
 from ctxd.dumpers.base import BaseDumper
 from ctxd.profiling import timed
 from ctxd.router import parse_github_pr_url
@@ -43,26 +45,26 @@ class GitHubPRDumper(BaseDumper):
         self.owner, self.repo, self.pr_number = parse_github_pr_url(self.url)
 
     def fetch(self) -> dict:
-        pr_info = self._gh_json(
-            [
-                "pr",
-                "view",
-                self.pr_number,
-                "--repo",
-                f"{self.owner}/{self.repo}",
-                "--json",
-                "title,body",
-            ]
+        # The 5 gh calls below are independent reads — fan them out so the
+        # slowest one (usually the diff) bounds wall time instead of summing.
+        tasks: list[Callable[[], object]] = [
+            lambda: self._gh_json([
+                "pr", "view", self.pr_number,
+                "--repo", f"{self.owner}/{self.repo}",
+                "--json", "title,body",
+            ]),
+            self._fetch_issue_comments,
+            self._fetch_diff_comments,
+            self._fetch_reviews,
+            self._generate_diff,
+        ]
+        pr_info, timeline_comments, diff_comments, reviews, diff_content = parallel_map(
+            lambda fn: fn(), tasks
         )
 
         body = pr_info.get("body", "") or ""
         if self.clean_body:
             body = self.clean_pr_body(body)
-
-        timeline_comments = self._fetch_issue_comments()
-        diff_comments = self._fetch_diff_comments()
-        reviews = self._fetch_reviews()
-        diff_content = self._generate_diff()
 
         return {
             "number": self.pr_number,
