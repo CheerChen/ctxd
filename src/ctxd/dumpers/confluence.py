@@ -13,7 +13,7 @@ from ctxd.auth import ensure_confluence_auth
 from ctxd.concurrency import parallel_map
 from ctxd.confluence.api_client import ConfluenceClient
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
-from ctxd.confluence.url_parser import parse_confluence_url
+from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, parse_short_link
 from ctxd.dumpers.base import BaseDumper
 from ctxd.profiling import timed
 
@@ -46,7 +46,29 @@ class ConfluenceDumper(BaseDumper):
         base_url, email, token = ensure_confluence_auth()
         self.client = ConfluenceClient(base_url=base_url, email=email, api_token=token)
 
+    def _resolve_short_link(self) -> None:
+        """Follow a Confluence tiny-link (``/wiki/x/<token>``) redirect once and
+        replace ``self.url`` with the resolved long URL.
+
+        Must be called after :meth:`validate_auth` so ``self.client`` is set.
+        No-op for non-short-link URLs.
+        """
+        if not is_short_link(self.url) or self.client is None:
+            return
+        with timed("confluence.resolve_short_link"):
+            resp = self.client.session.get(self.url, allow_redirects=True, timeout=30)
+            resp.raise_for_status()
+        resolved = resp.url
+        if resolved and resolved != self.url:
+            self.log(f"🔗 Resolved short link {self.url} → {resolved}")
+            self.url = resolved
+
     def default_filename(self) -> str:
+        if is_short_link(self.url):
+            # Short link cannot be resolved yet (no auth at this point); fall
+            # back to the token so auto-output still produces a usable name.
+            _, token = parse_short_link(self.url)
+            return f"confluence-{token}"
         _, page_id = parse_confluence_url(self.url)
         return f"confluence-{page_id}"
 
@@ -98,6 +120,7 @@ class ConfluenceDumper(BaseDumper):
             return
 
         self.validate_auth()
+        self._resolve_short_link()
         with timed("stage.fetch"):
             raw = self.fetch()
 
@@ -142,6 +165,7 @@ class ConfluenceDumper(BaseDumper):
         )
 
         self.validate_auth()
+        self._resolve_short_link()
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
 

@@ -226,6 +226,9 @@ Environment variables take precedence over the config file, so CI and one-off ov
 # Default: single page to stdout
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456
 
+# Tiny link (short URL) — resolved via authenticated redirect
+ctxd https://your-site.atlassian.net/wiki/x/ABC123
+
 # Recursive export with images, to an explicit directory
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./output
 
@@ -234,6 +237,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ```
 
 > **Note**: `-r` / `-i` / `--all-attachments` require `-o <dir>` or `-O` (Confluence writes a directory tree / images to disk).
+> **Tiny links**: `/wiki/x/<token>` URLs are followed once (after auth) and rewritten to the canonical long URL before any page fetch; `-O` auto-output names them `confluence-<token>` since the real page id isn't known at filename time.
 
 ### Options
 
