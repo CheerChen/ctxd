@@ -1,6 +1,12 @@
 from unittest.mock import MagicMock, patch
 
-from ctxd.confluence.url_parser import parse_confluence_url
+import pytest
+
+from ctxd.confluence.url_parser import (
+    is_short_link,
+    parse_confluence_url,
+    parse_short_link,
+)
 
 
 def test_parse_old_confluence_url() -> None:
@@ -17,6 +23,36 @@ def test_parse_new_confluence_url() -> None:
     )
     assert site == "https://example.atlassian.net"
     assert page_id == "3397648909"
+
+
+def test_is_short_link_recognizes_tiny_link() -> None:
+    assert is_short_link("https://example.atlassian.net/wiki/x/MIEH7") is True
+
+
+def test_is_short_link_rejects_long_url() -> None:
+    assert is_short_link(
+        "https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title"
+    ) is False
+
+
+def test_parse_short_link_extracts_site_and_token() -> None:
+    site, token = parse_short_link("https://example.atlassian.net/wiki/x/MIEH7")
+    assert site == "https://example.atlassian.net"
+    assert token == "MIEH7"
+
+
+def test_parse_short_link_rejects_non_short_link() -> None:
+    with pytest.raises(ValueError):
+        parse_short_link(
+            "https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title"
+        )
+
+
+def test_parse_confluence_url_rejects_short_link() -> None:
+    """parse_confluence_url must NOT silently accept short links; the dumper
+    resolves them first so the parser only ever sees long URLs."""
+    with pytest.raises(ValueError):
+        parse_confluence_url("https://example.atlassian.net/wiki/x/MIEH7")
 
 
 def test_get_space_name_resolves_and_caches() -> None:
@@ -160,3 +196,66 @@ def test_transform_prepends_metadata_block_and_offsets_marker_map() -> None:
     space_idx = result.index("| **Space**")
     body_idx = result.index("body content")
     assert body_idx > space_idx
+
+
+def test_default_filename_uses_token_for_short_link() -> None:
+    from ctxd.dumpers.confluence import ConfluenceDumper
+
+    dumper = ConfluenceDumper(
+        url="https://example.atlassian.net/wiki/x/MIEH7",
+        output=None,
+        fmt="md",
+        quiet=True,
+    )
+    # No auth at this point; must not raise, must not hit the network.
+    assert dumper.default_filename() == "confluence-MIEH7"
+
+
+def test_resolve_short_link_follows_redirect_and_replaces_url() -> None:
+    from ctxd.dumpers.confluence import ConfluenceDumper
+
+    dumper = ConfluenceDumper(
+        url="https://example.atlassian.net/wiki/x/MIEH7",
+        output=None,
+        fmt="md",
+        quiet=True,
+    )
+    dumper, _ = _make_dumper()
+    # Re-point to the short link so _resolve_short_link has work to do.
+    dumper.url = "https://example.atlassian.net/wiki/x/MIEH7"
+
+    mock_resp = MagicMock()
+    mock_resp.url = (
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+    )
+    mock_resp.raise_for_status.return_value = None
+    with patch.object(dumper.client.session, "get", return_value=mock_resp) as mock_get:
+        dumper._resolve_short_link()
+    assert dumper.url == (
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+    )
+    mock_get.assert_called_once_with(
+        "https://example.atlassian.net/wiki/x/MIEH7",
+        allow_redirects=True,
+        timeout=30,
+    )
+
+
+def test_resolve_short_link_noop_for_long_url() -> None:
+    from ctxd.dumpers.confluence import ConfluenceDumper
+
+    long_url = (
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+    )
+    dumper = ConfluenceDumper(
+        url=long_url,
+        output=None,
+        fmt="md",
+        quiet=True,
+    )
+    dumper, _ = _make_dumper()
+    dumper.url = long_url
+    with patch.object(dumper.client.session, "get") as mock_get:
+        dumper._resolve_short_link()
+    mock_get.assert_not_called()
+    assert dumper.url == long_url
