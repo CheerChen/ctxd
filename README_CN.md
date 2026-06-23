@@ -233,6 +233,9 @@ chmod 600 ~/.config/ctxd/config
 # 默认：单页输出到 stdout
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456
 
+# 短链接（tiny link）——认证后跟随重定向解析为长 URL
+ctxd https://your-site.atlassian.net/wiki/x/ABC123
+
 # 递归导出 + 图片，落到指定目录
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./output
 
@@ -241,6 +244,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ```
 
 > **注意**：`-r` / `-i` / `--all-attachments` 需配合 `-o <dir>` 或 `-O`（Confluence 需要把页面树和图片写入磁盘）。
+> **短链接**：`/wiki/x/<token>` 形式的 URL 会在认证后跟随一次重定向，改写为标准长 URL 再进行页面抓取；`-O` 自动命名时因尚未拿到真实 page id，文件名回退为 `confluence-<token>`。
 
 ### 专属参数
 

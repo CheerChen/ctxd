@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.10"
 
 [options]
-exclude-newer = "2026-05-31T06:01:02.818162Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -140,7 +140,7 @@ wheels = [
 
 [[package]]
 name = "ctxd"
-version = "0.3.3"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

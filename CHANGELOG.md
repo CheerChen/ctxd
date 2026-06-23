@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1]
+
+### Added
+* **Confluence tiny-link support** : `ctxd` now accepts Confluence short URLs of the form `https://<site>.atlassian.net/wiki/x/<token>` (the "tiny link" produced by *Copy link → Short link* in the Confluence UI). The dumper follows the authenticated 302 chain once (`/wiki/x/<token>` → `/wiki/pages/tinyurl.action?urlIdentifier=<token>` → final long URL) right after `validate_auth`, then replaces `self.url` with the resolved long URL so every downstream call (`fetch`, `_dump_obsidian`, metadata block) sees the standard `/wiki/spaces/<KEY>/pages/<id>/<title>` form. New pure helpers `is_short_link(url)` and `parse_short_link(url)` in `ctxd.confluence.url_parser` keep the recognition logic testable without network. `parse_confluence_url` deliberately still raises `ValueError` for short links — resolution is the dumper's job, not the parser's. `default_filename` falls back to `confluence-<token>` for short links (auth isn't available at filename time), so `-O` auto-output names are usable but not yet the real page id.
+
 ## [0.4.0]
 
 ### Changed
