@@ -1,16 +1,16 @@
+import pytest
+
 from ctxd.router import Source, detect, parse_github_pr_url, parse_slack_thread_url
 
 
-def test_detect_github_pr() -> None:
-    assert detect("https://github.com/o/r/pull/123") is Source.GITHUB_PR
-
-
-def test_detect_slack() -> None:
-    assert detect("https://foo.slack.com/archives/C123/p1735881234123456") is Source.SLACK_THREAD
-
-
-def test_detect_confluence() -> None:
-    assert detect("https://foo.atlassian.net/wiki/spaces/ABC/pages/1234/title") is Source.CONFLUENCE
+@pytest.mark.parametrize("url,expected", [
+    ("https://github.com/o/r/pull/123", Source.GITHUB_PR),
+    ("https://foo.slack.com/archives/C123/p1735881234123456", Source.SLACK_THREAD),
+    ("https://foo.atlassian.net/wiki/spaces/ABC/pages/1234/title", Source.CONFLUENCE),
+    ("https://foo.atlassian.net/browse/PROJ-1", Source.JIRA),
+])
+def test_detect(url, expected) -> None:
+    assert detect(url) is expected
 
 
 def test_parse_github_pr_url() -> None:

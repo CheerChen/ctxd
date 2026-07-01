@@ -1,4 +1,7 @@
+import pytest
+
 from ctxd.dumpers.slack import SlackDumper
+from ctxd.router import parse_slack_focused_ts
 
 
 def test_transform_markdown_includes_channel_and_thread_urls(monkeypatch) -> None:
@@ -85,3 +88,94 @@ def test_conversation_user_name_ignores_display_name() -> None:
     }
 
     assert SlackDumper._conversation_user_name(user, "U123") == "Sample User"
+
+
+# ---------------------------------------------------------------------------
+# parse_slack_focused_ts
+# ---------------------------------------------------------------------------
+
+def test_focused_ts_returns_reply_ts_when_differs_from_thread_ts() -> None:
+    url = "https://example.slack.com/archives/C12345678/p1782880850739909?thread_ts=1782879875.064939&cid=C12345678"
+    assert parse_slack_focused_ts(url) == "1782880850.739909"
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.slack.com/archives/C12345678/p1782879875064939?thread_ts=1782879875.064939&cid=C12345678",
+    "https://example.slack.com/archives/C12345678/p1782879875064939",
+    "https://example.slack.com/client/T123/C12345678/thread/C12345678-1782879875.064939",
+])
+def test_focused_ts_returns_none(url) -> None:
+    assert parse_slack_focused_ts(url) is None
+
+
+# ---------------------------------------------------------------------------
+# SlackDumper focused message rendering
+# ---------------------------------------------------------------------------
+
+def test_focused_message_header_and_marker(monkeypatch) -> None:
+    monkeypatch.setattr(SlackDumper, "_format_ts", staticmethod(lambda ts: "2026-07-01 13:47:30"))
+    dumper = SlackDumper(
+        url="https://example.slack.com/archives/C12345678/p1782880850739909?thread_ts=1782879875.064939&cid=C12345678",
+        output=None,
+        fmt="md",
+    )
+
+    def fake_api_call(method: str, params: dict[str, str]) -> dict:
+        return {
+            "ok": True,
+            "user": {
+                "id": params["user"],
+                "name": "test.user",
+                "profile": {"real_name_normalized": "Test User"},
+            },
+        }
+
+    monkeypatch.setattr(dumper, "_api_call", fake_api_call)
+
+    out = dumper.transform(
+        {
+            "channel": "C12345678",
+            "channel_name": "test-room",
+            "thread_ts": "1782879875.064939",
+            "messages": [
+                {"ts": "1782879875.064939", "text": "root message", "user": "U001"},
+                {"ts": "1782880850.739909", "text": "focused reply", "user": "U002"},
+            ],
+            "participants": ["U001", "U002"],
+        }
+    )
+
+    # Header should show focused message info
+    assert "**Focused Message:**" in out
+    assert "@Test User" in out
+
+    # The focused message in conversation should have ▶ marker
+    assert "### ▶ [@Test User] 2026-07-01 13:47:30" in out
+
+    # The root message should NOT have the marker
+    root_line = [l for l in out.splitlines() if l.startswith("### [") and "▶" not in l]
+    assert len(root_line) >= 1
+
+
+def test_no_focused_message_when_thread_root_url(monkeypatch) -> None:
+    monkeypatch.setattr(SlackDumper, "_format_ts", staticmethod(lambda ts: "2026-07-01 13:24:35"))
+    dumper = SlackDumper(
+        url="https://example.slack.com/archives/C12345678/p1782879875064939",
+        output=None,
+        fmt="md",
+    )
+
+    out = dumper.transform(
+        {
+            "channel": "C12345678",
+            "channel_name": "test-room",
+            "thread_ts": "1782879875.064939",
+            "messages": [{"ts": "1782879875.064939", "text": "root message", "user": "U001"}],
+            "participants": ["U001"],
+        }
+    )
+
+    # No focused message header when URL points at thread root
+    assert "**Focused Message:**" not in out
+    # No ▶ marker
+    assert "▶" not in out

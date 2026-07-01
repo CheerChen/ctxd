@@ -1,23 +1,16 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ctxd.jira.url_parser import parse_jira_url
-from ctxd.router import Source, detect
 
 
-def test_parse_jira_url() -> None:
-    site, issue_key = parse_jira_url(
-        "https://example.atlassian.net/browse/INFRA-10588"
-    )
-    assert site == "https://example.atlassian.net"
-    assert issue_key == "INFRA-10588"
-
-
-def test_parse_jira_url_different_project() -> None:
-    site, issue_key = parse_jira_url(
-        "https://myteam.atlassian.net/browse/DEV-42"
-    )
-    assert site == "https://myteam.atlassian.net"
-    assert issue_key == "DEV-42"
+@pytest.mark.parametrize("url,site,key", [
+    ("https://example.atlassian.net/browse/INFRA-10588", "https://example.atlassian.net", "INFRA-10588"),
+    ("https://myteam.atlassian.net/browse/DEV-42", "https://myteam.atlassian.net", "DEV-42"),
+])
+def test_parse_jira_url(url, site, key) -> None:
+    assert parse_jira_url(url) == (site, key)
 
 
 def test_parse_jira_url_invalid() -> None:
@@ -26,16 +19,6 @@ def test_parse_jira_url_invalid() -> None:
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
-
-
-def test_detect_jira_url() -> None:
-    source = detect("https://example.atlassian.net/browse/INFRA-10588")
-    assert source is Source.JIRA
-
-
-def test_detect_confluence_url_not_jira() -> None:
-    source = detect("https://example.atlassian.net/wiki/spaces/KIDPF/pages/123/title")
-    assert source is Source.CONFLUENCE
 
 
 def test_jira_dumper_transform() -> None:
@@ -168,47 +151,29 @@ def test_convert_tt_to_code() -> None:
     assert "<tt>" not in result
 
 
-def test_convert_double_brace_simple() -> None:
-    html = "<p>{{producer}}をlambda名に含む</p>"
+@pytest.mark.parametrize("html,expected_substrings", [
+    ("<p>{{producer}}をlambda名に含む</p>", ["<code>producer</code>"]),
+    # Jira splits {{...}} content across <p> tags
+    ("{{<p>sid</p>/xxx}}", ["<code>", "sid", "/xxx"]),
+    ("{{${env}-db-masking-\nproducer-prepare-execution-role}}", ["<code>", "db-masking"]),
+])
+def test_convert_double_brace(html, expected_substrings) -> None:
     result = convert_double_brace_monospace(html)
-    assert "<code>producer</code>" in result
     assert "{{" not in result
+    for s in expected_substrings:
+        assert s in result
 
 
-def test_convert_double_brace_with_html_tags() -> None:
-    """Jira splits {{...}} content across <p> tags."""
-    html = "{{<p>sid</p>/xxx}}"
-    result = convert_double_brace_monospace(html)
-    assert "<code>" in result
-    assert "sid" in result
-    assert "/xxx" in result
-
-
-def test_convert_double_brace_multiline() -> None:
-    html = "{{${env}-db-masking-\nproducer-prepare-execution-role}}"
-    result = convert_double_brace_monospace(html)
-    assert "<code>" in result
-    assert "db-masking" in result
-
-
-def test_rejoin_dollar_variable_newline() -> None:
-    html = "Environment: $\n{env}<br/>"
+@pytest.mark.parametrize("html,expected", [
+    ("Environment: $\n{env}<br/>", "${env}"),
+    ("alias/$</p>\n{env}-db-masking", "${env}"),
+    ('arn:aws:iam::${account_id}:role/$<br/>\n{env}', "${env}"),
+])
+def test_rejoin_dollar_variable(html, expected) -> None:
     result = rejoin_split_dollar_variables(html)
-    assert "${env}" in result
-
-
-def test_rejoin_dollar_variable_across_p_tag() -> None:
-    html = "alias/$</p>\n{env}-db-masking"
-    result = rejoin_split_dollar_variables(html)
-    assert "${env}" in result
-
-
-def test_rejoin_dollar_variable_with_br() -> None:
-    html = 'arn:aws:iam::${account_id}:role/$<br/>\n{env}'
-    result = rejoin_split_dollar_variables(html)
-    assert "${env}" in result
-    # ${account_id} should remain intact
-    assert "${account_id}" in result
+    assert expected in result
+    # Intact variables should remain
+    assert "${account_id}" in result or "account_id" not in html
 
 
 def test_repair_broken_preformatted() -> None:

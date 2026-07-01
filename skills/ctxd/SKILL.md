@@ -14,6 +14,8 @@ Supported URLs:
 - Confluence page
 - Jira issue
 
+GitHub support is **pull requests only** (`github.com/<owner>/<repo>/pull/<n>`). Repo, file, blob, issue, gist, and commit URLs are **not** supported — `ctxd` exits with `Unsupported URL`. To read a public repo file or README, fetch the raw URL with `curl` / WebFetch instead; do not route it through `ctxd`.
+
 ## Why use it
 
 - It exports dense Markdown or text instead of forcing the model through many tool calls.
@@ -46,10 +48,16 @@ If auth is missing, say which key or login is required.
 
 ## Default commands
 
-Single item to stdout:
+Single item to stdout (cross-source recursion is on by default — supported URLs found in the output are fetched and appended automatically):
 
 ```bash
 ctxd '<url>' -f text
+```
+
+Disable recursion if only the primary URL is needed:
+
+```bash
+ctxd '<url>' -f text --no-recurse
 ```
 
 Confluence page tree:

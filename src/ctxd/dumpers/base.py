@@ -33,12 +33,16 @@ class BaseDumper(ABC):
     def default_filename(self) -> str:
         """Return a default filename for this source."""
 
-    def dump(self) -> None:
+    def render(self) -> str:
+        """Fetch + transform and return the rendered content without writing."""
         self.validate_auth()
         with timed("stage.fetch"):
             raw = self.fetch()
         with timed("stage.transform"):
-            content = self.transform(raw)
+            return self.transform(raw)
+
+    def dump(self) -> None:
+        content = self.render()
 
         if self.output:
             with open(self.output, "w", encoding="utf-8") as handle:

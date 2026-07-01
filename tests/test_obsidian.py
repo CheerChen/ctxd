@@ -21,50 +21,44 @@ from ctxd.obsidian import (
 )
 
 
-def test_sanitize_note_stem_strips_obsidian_link_chars() -> None:
-    assert sanitize_note_stem("[PROJ-1] Hello | World #tag^v", "fallback") == "PROJ-1 Hello World tagv"
+@pytest.mark.parametrize("raw,fallback,expected", [
+    ("[PROJ-1] Hello | World #tag^v", "fallback", "PROJ-1 Hello World tagv"),
+    ("  multiple   spaces  ", "fb", "multiple spaces"),
+    ("[]#^|", "page-123", "page-123"),
+    ('a/b\\c:d*e?f"g<h>i', "fb", "abcdefghi"),
+])
+def test_sanitize_note_stem(raw, fallback, expected) -> None:
+    assert sanitize_note_stem(raw, fallback) == expected
 
 
-def test_sanitize_note_stem_collapses_whitespace() -> None:
-    assert sanitize_note_stem("  multiple   spaces  ", "fb") == "multiple spaces"
-
-
-def test_sanitize_note_stem_falls_back_when_empty() -> None:
-    assert sanitize_note_stem("[]#^|", "page-123") == "page-123"
+def test_sanitize_note_stem_falls_back_on_whitespace() -> None:
     assert sanitize_note_stem("   ", "page-123") == "page-123"
 
 
-def test_sanitize_note_stem_strips_fs_unsafe_chars() -> None:
-    assert sanitize_note_stem('a/b\\c:d*e?f"g<h>i', "fb") == "abcdefghi"
+@pytest.mark.parametrize("raw,expected", [
+    ("foo bar.png", "foo bar.png"),
+    ("///", "attachment"),
+])
+def test_sanitize_attachment_name(raw, expected) -> None:
+    assert sanitize_attachment_name(raw) == expected
 
 
-def test_sanitize_attachment_name_keeps_dots() -> None:
-    assert sanitize_attachment_name("foo bar.png") == "foo bar.png"
+@pytest.mark.parametrize("value,expected", [
+    ("https://example.atlassian.net/wiki/spaces/X/pages/123/Title",
+     "https://example.atlassian.net/wiki/spaces/X/pages/123/Title"),
+    ("Hello World", "Hello World"),
+    ("マスキング方針案", "マスキング方針案"),
+])
+def test_yaml_escape_unquoted(value, expected) -> None:
+    assert _yaml_escape(value) == expected
 
 
-def test_sanitize_attachment_name_falls_back_on_empty() -> None:
-    assert sanitize_attachment_name("///") == "attachment"
-
-
-def test_yaml_escape_plain_url_unquoted() -> None:
-    assert _yaml_escape("https://example.atlassian.net/wiki/spaces/X/pages/123/Title") == \
-        "https://example.atlassian.net/wiki/spaces/X/pages/123/Title"
-
-
-def test_yaml_escape_plain_title_unquoted() -> None:
-    assert _yaml_escape("Hello World") == "Hello World"
-
-
-def test_yaml_escape_japanese_unquoted() -> None:
-    assert _yaml_escape("マスキング方針案") == "マスキング方針案"
-
-
-def test_yaml_escape_bracket_start_quoted() -> None:
-    assert _yaml_escape("[PROJ-1] Summary") == '"[PROJ-1] Summary"'
-
-
-def test_yaml_escape_colon_space_quoted() -> None:
-    assert _yaml_escape("Hello: World") == '"Hello: World"'
+@pytest.mark.parametrize("value,expected", [
+    ("[PROJ-1] Summary", '"[PROJ-1] Summary"'),
+    ("Hello: World", '"Hello: World"'),
+])
+def test_yaml_escape_quoted(value, expected) -> None:
+    assert _yaml_escape(value) == expected
 
 
 def test_yaml_escape_empty_string() -> None:

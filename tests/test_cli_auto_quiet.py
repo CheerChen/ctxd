@@ -13,10 +13,18 @@ class _FakeGitHubDumper:
         self.output = kwargs.get("output")
         self.quiet = kwargs.get("quiet")
         self.verbose = kwargs.get("verbose")
+        self.url = kwargs.get("url", "")
+        self.fmt = kwargs.get("fmt", "md")
         type(self).last_instance = self
 
     def default_filename(self) -> str:
         return "pr-1.md"
+
+    def render(self) -> str:
+        return "fake content\n"
+
+    def log(self, message: str) -> None:
+        pass
 
     def dump(self) -> None:
         return

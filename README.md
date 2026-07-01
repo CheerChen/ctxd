@@ -113,6 +113,8 @@ gh auth status
 | `-v, --verbose` | Verbose logging |
 | `--profile` | Print stage / HTTP / subprocess timing summary |
 | `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
+| `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `1`, max `2`) |
+| `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`) |
 
 Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
 
@@ -182,6 +184,8 @@ ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 # Archive URL format
 ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 ```
+
+When you copy a link to a specific reply (archive URL with `?thread_ts=` where the path ts differs from the thread root), `ctxd` fetches the entire thread but highlights the focused message — a `**Focused Message:**` line in the header and a `▶` marker on the corresponding message in the conversation flow.
 
 ### Options
 
@@ -264,6 +268,29 @@ Shares authentication with Confluence (see above), so the same config applies. J
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
+
+---
+
+## Cross-source recursion
+
+By default, `ctxd` scans the rendered output for supported URLs (Slack, GitHub PR, Confluence, Jira) and fetches them too, appending the results as a labelled appendix. This means a Slack thread that links a Jira issue and a GitHub PR pulls all three in one command — no follow-up fetches needed.
+
+```bash
+# Default: depth=1, auto-expands linked supported URLs
+ctxd https://app.slack.com/client/.../thread/...
+
+# Disable recursion
+ctxd <url> --no-recurse
+
+# Deeper recursion (max 2)
+ctxd <url> --recurse-depth 2
+```
+
+Key behaviours:
+- **Deduplication**: the same URL is never fetched twice within one run.
+- **Cap**: at most 5 child URLs are expanded per level (prevents Jira issue-link explosions).
+- **Graceful skip**: if a child URL lacks credentials (e.g. a Slack thread links a Confluence page but no Confluence token is configured), the appendix notes the skip instead of failing.
+- **Confluence directory export**: recursion is disabled when using `-o`/`-O` with Confluence (which writes a page tree to disk); use stdout for recursion.
 
 ---
 

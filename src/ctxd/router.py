@@ -59,3 +59,31 @@ def parse_slack_thread_url(url: str) -> tuple[str, str]:
         return channel, query_match.group(1)
 
     return channel, f"{raw_ts[:10]}.{raw_ts[10:16]}"
+
+
+def parse_slack_focused_ts(url: str) -> str | None:
+    """Extract the focused message ts from a Slack archives URL.
+
+    Slack archives URLs embed the focused message in the path (``/p<ts>``)
+    and the thread root in the ``thread_ts`` query param. When they differ,
+    the user copied a link to a specific reply — we return that reply's ts
+    so the dumper can highlight it. When they're the same (or the URL is a
+    client-format thread URL), the user pointed at the thread root, so we
+    return None (no special highlight needed).
+    """
+    archives_match = _SLACK_ARCHIVES_RE.search(url)
+    if not archives_match:
+        return None  # client URL — ts is already the thread root
+
+    raw_ts = archives_match.group("ts")
+    path_ts = f"{raw_ts[:10]}.{raw_ts[10:16]}"
+
+    query_match = re.search(r"[?&]thread_ts=(\d+\.\d+)", url)
+    if not query_match:
+        return None  # no thread_ts → /p<ts> IS the thread root
+
+    thread_ts = query_match.group(1)
+    if path_ts == thread_ts:
+        return None  # focused message is the thread root
+
+    return path_ts

@@ -120,6 +120,8 @@ gh auth status
 | `-v, --verbose` | 详细日志 |
 | `--profile` | 打印 stage / HTTP / subprocess 耗时摘要 |
 | `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
+| `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `1`，最大 `2`） |
+| `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`） |
 
 参数可以放在 URL 前后（如 `ctxd -q <url>` 和 `ctxd <url> -q` 均可）。
 
@@ -189,6 +191,8 @@ ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 # 归档 URL 格式
 ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 ```
+
+当你复制的是某条特定回复的链接时（归档 URL 带 `?thread_ts=` 且 path ts 与 thread root 不同），`ctxd` 仍然抓取整个 thread，但会高亮你指向的那条消息——header 中显示 `**Focused Message:**`，对话流中对应消息标有 `▶` 标记。
 
 ### 专属参数
 
@@ -271,6 +275,29 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
+
+---
+
+## 跨源递归
+
+默认情况下，`ctxd` 会扫描输出内容中出现的 supported URL（Slack / GitHub PR / Confluence / Jira），自动抓取并追加为带标签的附录。这意味着一个 Slack thread 里贴了 Jira issue 和 GitHub PR 链接时，一条命令就能把三处内容全部拉下来——不需要再手动跟进抓取。
+
+```bash
+# 默认 depth=1，自动展开链接中的 supported URL
+ctxd https://app.slack.com/client/.../thread/...
+
+# 关闭递归
+ctxd <url> --no-recurse
+
+# 更深递归（最大 2）
+ctxd <url> --recurse-depth 2
+```
+
+关键行为：
+- **去重**：同一次 run 中同一个 URL 不会被重复抓取。
+- **上限**：每层最多展开 5 个子 URL（防止 Jira issue 互链爆炸）。
+- **缺凭证跳过**：如果子 URL 缺少凭证（比如 Slack thread 里贴了 Confluence 链接但没配 Confluence token），附录中标注跳过而非报错中断。
+- **Confluence 目录导出**：使用 `-o`/`-O` 导出 Confluence 页面树时递归关闭（目录树与拼接流不兼容）；需要递归请用 stdout。
 
 ---
 

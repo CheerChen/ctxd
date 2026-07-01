@@ -46,6 +46,14 @@ class ConfluenceDumper(BaseDumper):
         base_url, email, token = ensure_confluence_auth()
         self.client = ConfluenceClient(base_url=base_url, email=email, api_token=token)
 
+    def render(self) -> str:
+        self.validate_auth()
+        self._resolve_short_link()
+        with timed("stage.fetch"):
+            raw = self.fetch()
+        with timed("stage.transform"):
+            return self.transform(raw)
+
     def _resolve_short_link(self) -> None:
         """Follow a Confluence tiny-link (``/wiki/x/<token>``) redirect once and
         replace ``self.url`` with the resolved long URL.

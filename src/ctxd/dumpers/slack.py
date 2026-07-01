@@ -13,7 +13,7 @@ from ctxd.auth import get_slack_token
 from ctxd.dumpers.base import BaseDumper
 from ctxd.http_retry import mount_retry
 from ctxd.profiling import instrument_session
-from ctxd.router import parse_slack_thread_url
+from ctxd.router import parse_slack_focused_ts, parse_slack_thread_url
 
 
 class SlackDumper(BaseDumper):
@@ -31,6 +31,7 @@ class SlackDumper(BaseDumper):
         self.download_files = download_files
         self.raw = raw
         self.token = ""
+        self.focused_ts = parse_slack_focused_ts(url)
         self.session = requests.Session()
         # Slack Web API uses POST for idempotent reads; include POST in retry set.
         mount_retry(self.session, methods=frozenset(["GET", "HEAD", "POST"]))
@@ -75,6 +76,10 @@ class SlackDumper(BaseDumper):
 
         start_time = self._format_ts(messages[0].get("ts", thread_ts))
 
+        focused_msg = None
+        if self.focused_ts:
+            focused_msg = next((m for m in messages if m.get("ts") == self.focused_ts), None)
+
         lines: list[str] = []
         if self.fmt == "md":
             lines.append(f"# Slack Thread: {channel}-{thread_ts}")
@@ -83,6 +88,11 @@ class SlackDumper(BaseDumper):
             lines.append(f"**Channel URL:** {self._channel_url(channel)}")
             lines.append(f"**Thread Started:** {start_time}")
             lines.append(f"**Thread URL:** {self._thread_url(channel, thread_ts)}")
+            if focused_msg:
+                focused_user = self._get_user(focused_msg.get("user", "")) if focused_msg.get("user") else {}
+                focused_name = self._conversation_user_name(focused_user, focused_msg.get("user", "unknown"))
+                focused_time = self._format_ts(self.focused_ts)
+                lines.append(f"**Focused Message:** {focused_time} @{focused_name}")
             lines.append("")
             lines.append(f"## Participants ({len(participants)})")
             lines.extend(self._format_participant_lines(participants, markdown=True))
@@ -97,6 +107,11 @@ class SlackDumper(BaseDumper):
             lines.append(f"Channel URL: {self._channel_url(channel)}")
             lines.append(f"Thread Started: {start_time}")
             lines.append(f"Thread URL: {self._thread_url(channel, thread_ts)}")
+            if focused_msg:
+                focused_user = self._get_user(focused_msg.get("user", "")) if focused_msg.get("user") else {}
+                focused_name = self._conversation_user_name(focused_user, focused_msg.get("user", "unknown"))
+                focused_time = self._format_ts(self.focused_ts)
+                lines.append(f"Focused Message: {focused_time} @{focused_name}")
             lines.append("")
             lines.append(f"--- PARTICIPANTS ({len(participants)}) ---")
             lines.extend(self._format_participant_lines(participants, markdown=False))
@@ -112,6 +127,7 @@ class SlackDumper(BaseDumper):
                     msg,
                     markdown=self.fmt == "md",
                     attachment_base_dir=attachment_base_dir,
+                    focused=(self.focused_ts is not None and msg.get("ts") == self.focused_ts),
                 )
             )
 
@@ -212,7 +228,7 @@ class SlackDumper(BaseDumper):
             lines.append(f"- {label}")
         return lines
 
-    def _format_message(self, msg: dict, markdown: bool, attachment_base_dir: Path) -> list[str]:
+    def _format_message(self, msg: dict, markdown: bool, attachment_base_dir: Path, focused: bool = False) -> list[str]:
         ts = msg.get("ts", "")
         text = msg.get("text", "")
         files = msg.get("files", []) or []
@@ -234,12 +250,13 @@ class SlackDumper(BaseDumper):
         if markdown and not self.raw:
             processed = self._convert_mrkdwn_to_markdown(processed)
 
+        marker = "▶ " if focused else ""
         lines: list[str] = []
         if markdown:
-            lines.append(f"### [{display_name}] {self._format_ts(ts)}")
+            lines.append(f"### {marker}[{display_name}] {self._format_ts(ts)}")
             lines.append(processed)
         else:
-            lines.append(f"[{display_name}] {self._format_ts(ts)}")
+            lines.append(f"{marker}[{display_name}] {self._format_ts(ts)}")
             lines.append(processed)
 
         if files:

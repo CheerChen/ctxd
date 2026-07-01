@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.2]
+
+### Added
+* **Cross-source recursion** (`--recurse-depth`, `--no-recurse`) : by default, `ctxd` now scans the rendered output for supported URLs (Slack / GitHub PR / Confluence / Jira) and fetches them too, appending the results as a labelled appendix (`> ↳ [N] recursed from <url>`). A Slack thread that links a Jira issue and a GitHub PR now pulls all three in one command — no follow-up fetches needed. Default depth is 1 (one level of expansion); `--recurse-depth 2` goes one level deeper, `--no-recurse` disables it entirely. Key guardrails: per-level cap of 5 child URLs (prevents Jira issue-link explosions), cross-level deduplication (same URL never fetched twice), and graceful skip on missing credentials (appendix notes the skip instead of failing the whole run). Confluence directory export (`-o`/`-O`) and Obsidian mode are exempt — recursion is stdout / single-file only for those sources. `BaseDumper` gained a `render()` method (validate_auth + fetch + transform, returns string without writing) to support this; `ConfluenceDumper` overrides it to include short-link resolution.
+* **Slack focused-message highlight** : when a user copies a link to a specific reply (archives URL with `?thread_ts=` where the path ts differs from the thread root), `ctxd` now adds a `**Focused Message:** <time> @<user>` line to the header and marks the corresponding message in the conversation with a `▶` prefix. This lets the LLM know which message the user pointed at, even though the entire thread is fetched. New helper `parse_slack_focused_ts(url)` in `ctxd.router` extracts the focused ts; no highlight is shown when the URL points at the thread root itself.
+
 ## [0.4.1]
 
 ### Added

@@ -9,30 +9,20 @@ from ctxd.confluence.url_parser import (
 )
 
 
-def test_parse_old_confluence_url() -> None:
-    site, page_id = parse_confluence_url(
-        "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=3140419873"
-    )
-    assert site == "https://example.atlassian.net"
-    assert page_id == "3140419873"
+@pytest.mark.parametrize("url,site,page_id", [
+    ("https://example.atlassian.net/wiki/pages/viewpage.action?pageId=3140419873", "https://example.atlassian.net", "3140419873"),
+    ("https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title", "https://example.atlassian.net", "3397648909"),
+])
+def test_parse_confluence_url(url, site, page_id) -> None:
+    assert parse_confluence_url(url) == (site, page_id)
 
 
-def test_parse_new_confluence_url() -> None:
-    site, page_id = parse_confluence_url(
-        "https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title"
-    )
-    assert site == "https://example.atlassian.net"
-    assert page_id == "3397648909"
-
-
-def test_is_short_link_recognizes_tiny_link() -> None:
-    assert is_short_link("https://example.atlassian.net/wiki/x/MIEH7") is True
-
-
-def test_is_short_link_rejects_long_url() -> None:
-    assert is_short_link(
-        "https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title"
-    ) is False
+@pytest.mark.parametrize("url,expected", [
+    ("https://example.atlassian.net/wiki/x/MIEH7", True),
+    ("https://example.atlassian.net/wiki/spaces/KIDPF/pages/3397648909/title", False),
+])
+def test_is_short_link(url, expected) -> None:
+    assert is_short_link(url) is expected
 
 
 def test_parse_short_link_extracts_site_and_token() -> None:
@@ -141,23 +131,17 @@ def test_build_metadata_block_happy_path() -> None:
     assert block.endswith("\n")
 
 
-def test_build_metadata_block_degrades_when_author_unresolved() -> None:
+@pytest.mark.parametrize("field,cache_attr,bad_id,expected_label", [
+    ("author", "_user_cache", "ghost-account", "| **Author** | ghost-account |"),
+    ("space", "_space_cache", "orphan-space", "| **Space** | orphan-space |"),
+])
+def test_build_metadata_block_degrades_on_resolve_failure(field, cache_attr, bad_id, expected_label) -> None:
     dumper, client = _make_dumper()
-    # Remove cached display name and make the session call raise -> fallback to accountId
-    client._user_cache.clear()
-    page = _make_page(author_id="ghost-account")
+    getattr(client, cache_attr).clear()
+    page = _make_page(**{f"{field}_id": bad_id} if field == "author" else {"space_id": bad_id})
     with patch.object(client.session, "get", side_effect=RuntimeError("boom")):
         block = dumper._build_metadata_block(page)
-    assert "| **Author** | ghost-account |" in block
-
-
-def test_build_metadata_block_degrades_when_space_unresolved() -> None:
-    dumper, client = _make_dumper()
-    client._space_cache.clear()
-    page = _make_page(space_id="orphan-space")
-    with patch.object(client.session, "get", side_effect=RuntimeError("boom")):
-        block = dumper._build_metadata_block(page)
-    assert "| **Space** | orphan-space |" in block
+    assert expected_label in block
 
 
 def test_build_metadata_block_degrades_when_fields_missing() -> None:
@@ -226,13 +210,13 @@ def test_resolve_short_link_follows_redirect_and_replaces_url() -> None:
 
     mock_resp = MagicMock()
     mock_resp.url = (
-        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+Title"
     )
     mock_resp.raise_for_status.return_value = None
     with patch.object(dumper.client.session, "get", return_value=mock_resp) as mock_get:
         dumper._resolve_short_link()
     assert dumper.url == (
-        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+Title"
     )
     mock_get.assert_called_once_with(
         "https://example.atlassian.net/wiki/x/MIEH7",
@@ -245,7 +229,7 @@ def test_resolve_short_link_noop_for_long_url() -> None:
     from ctxd.dumpers.confluence import ConfluenceDumper
 
     long_url = (
-        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+AMI"
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+Title"
     )
     dumper = ConfluenceDumper(
         url=long_url,
