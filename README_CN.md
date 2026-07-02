@@ -120,8 +120,8 @@ gh auth status
 | `-v, --verbose` | 详细日志 |
 | `--profile` | 打印 stage / HTTP / subprocess 耗时摘要 |
 | `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
-| `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `1`，最大 `2`） |
-| `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`） |
+| `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `0`=关闭，最大 `2`；需手动 `1`/`2` 开启） |
+| `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`；保留以便显式声明） |
 
 参数可以放在 URL 前后（如 `ctxd -q <url>` 和 `ctxd <url> -q` 均可）。
 

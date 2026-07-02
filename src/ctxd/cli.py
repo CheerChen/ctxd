@@ -46,10 +46,10 @@ from ctxd.router import Source, detect
               default=5, show_default=True,
               help="Max concurrent HTTP / subprocess fan-out (Confluence pages, gh API)")
 @click.option("--recurse-depth", "recurse_depth", type=click.IntRange(0, 2),
-              default=1, show_default=True,
-              help="Cross-source recursion depth: expand supported URLs found in the output (0=off)")
+              default=0, show_default=True,
+              help="Cross-source recursion depth: expand supported URLs found in the output (0=off, default; 1-2 opt-in)")
 @click.option("--no-recurse", is_flag=True, default=False,
-              help="Disable cross-source recursion (equivalent to --recurse-depth 0)")
+              help="Disable cross-source recursion (equivalent to --recurse-depth 0; kept for explicitness)")
 @click.version_option(__version__, prog_name="ctxd")
 @click.pass_context
 def main(

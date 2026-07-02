@@ -113,8 +113,8 @@ gh auth status
 | `-v, --verbose` | Verbose logging |
 | `--profile` | Print stage / HTTP / subprocess timing summary |
 | `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
-| `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `1`, max `2`) |
-| `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`) |
+| `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `0`=off, max `2`; opt-in with `1`/`2`) |
+| `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`; kept for explicitness) |
 
 Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from ctxd.auth import AuthError
 from ctxd.dumpers import ConfluenceDumper, GitHubPRDumper, JiraDumper, SlackDumper
+from ctxd.profiling import record, timed
 from ctxd.router import Source, detect, parse_slack_thread_url
 
 # Cap how many child URLs we recurse into per level. Prevents a Jira issue
@@ -122,11 +123,19 @@ def render_with_recurse(
     if depth <= 0:
         return content
 
-    child_urls = extract_supported_urls(content, exclude=seen)
+    all_child_urls = extract_supported_urls(content, exclude=seen)
     truncated = 0
-    if len(child_urls) > MAX_CHILDREN_PER_LEVEL:
-        truncated = len(child_urls) - MAX_CHILDREN_PER_LEVEL
-        child_urls = child_urls[:MAX_CHILDREN_PER_LEVEL]
+    if len(all_child_urls) > MAX_CHILDREN_PER_LEVEL:
+        truncated = len(all_child_urls) - MAX_CHILDREN_PER_LEVEL
+        child_urls = all_child_urls[:MAX_CHILDREN_PER_LEVEL]
+    else:
+        child_urls = all_child_urls
+
+    # P0: feed per-level discovery / render / truncation counts to the profiler
+    # so --profile can answer "how many links did we find, render, and drop?"
+    record(f"recurse.L{_level}.discovered", count=len(all_child_urls))
+    record(f"recurse.L{_level}.rendered", count=len(child_urls))
+    record(f"recurse.L{_level}.truncated", count=truncated)
 
     if not child_urls and truncated == 0:
         return content
@@ -144,11 +153,14 @@ def render_with_recurse(
 
         _log(opts.quiet, f"  ↳ {prefix} recursing into {child_url}")
 
+        # P0: time each child fetch+render under a level-tagged label so the
+        # profile table separates per-child latency from the primary fetch.
         try:
             child_dumper = _build_dumper(child_url, opts)
-            child_content = render_with_recurse(
-                child_dumper, depth=depth - 1, seen=seen, _level=_level + 1
-            )
+            with timed(f"recurse.L{_level}.child{index}"):
+                child_content = render_with_recurse(
+                    child_dumper, depth=depth - 1, seen=seen, _level=_level + 1
+                )
             appendix.append(f"> ↳ {prefix} recursed from {child_url}\n\n{child_content}")
         except AuthError as exc:
             appendix.append(f"> ↳ {prefix} recursed from {child_url} — skipped: {exc}")
@@ -156,10 +168,17 @@ def render_with_recurse(
             appendix.append(f"> ↳ {prefix} recursed from {child_url} — skipped: {exc}")
 
     if truncated:
-        appendix.append(
+        # P1: list the truncated URLs so the LLM (or a human reviewing the
+        # dump) can decide whether to follow up on a specific skipped link
+        # instead of seeing only an opaque count.
+        truncated_urls = all_child_urls[MAX_CHILDREN_PER_LEVEL:]
+        lines = [
             f"> ↳ ... {truncated} more supported link(s) truncated "
-            f"(cap {MAX_CHILDREN_PER_LEVEL} per level)"
-        )
+            f"(cap {MAX_CHILDREN_PER_LEVEL} per level):"
+        ]
+        for u in truncated_urls:
+            lines.append(f">   - {u}")
+        appendix.append("\n".join(lines))
 
     if not appendix:
         return content
