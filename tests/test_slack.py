@@ -4,6 +4,108 @@ from ctxd.dumpers.slack import SlackDumper
 from ctxd.router import parse_slack_focused_ts
 
 
+# ---------------------------------------------------------------------------
+# _download_files — every attachment gets a stable file-id-suffixed name
+# ---------------------------------------------------------------------------
+
+def test_download_files_disambiguates_same_name(monkeypatch, tmp_path) -> None:
+    dumper = SlackDumper(
+        url="https://example.slack.com/archives/C123/p1735881234123456",
+        output=None,
+        fmt="md",
+        download_files=True,
+    )
+
+    # Fake file payloads: four attachments all named "image.png" with distinct IDs.
+    files = [
+        {"id": "F0AAAAAAA1", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA1/dl", "url_private": "https://slack.com/files/F0AAAAAAA1"},
+        {"id": "F0AAAAAAA2", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA2/dl", "url_private": "https://slack.com/files/F0AAAAAAA2"},
+        {"id": "F0AAAAAAA3", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA3/dl", "url_private": "https://slack.com/files/F0AAAAAAA3"},
+        {"id": "F0AAAAAAA4", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA4/dl", "url_private": "https://slack.com/files/F0AAAAAAA4"},
+    ]
+
+    def fake_get(url, timeout=60):
+        class FakeResp:
+            content = url.encode()
+            headers = {"content-type": "image/png"}
+            def raise_for_status(self): pass
+        return FakeResp()
+
+    monkeypatch.setattr(dumper.session, "get", fake_get)
+
+    dumper._download_files(files, tmp_path)
+
+    attachment_dir = tmp_path / "attachments"
+    downloaded = sorted(p.name for p in attachment_dir.iterdir())
+    # Uniform naming: IMG_{file_id}.{ext} for every attachment.
+    assert len(downloaded) == 4
+    assert downloaded == [
+        "IMG_F0AAAAAAA1.png",
+        "IMG_F0AAAAAAA2.png",
+        "IMG_F0AAAAAAA3.png",
+        "IMG_F0AAAAAAA4.png",
+    ]
+
+
+def test_download_files_always_appends_file_id(monkeypatch, tmp_path) -> None:
+    """Uniform naming: IMG_{file_id}.{ext} regardless of original filename."""
+    dumper = SlackDumper(
+        url="https://example.slack.com/archives/C123/p1735881234123456",
+        output=None,
+        fmt="md",
+        download_files=True,
+    )
+
+    files = [
+        {"id": "F0AAAAAAA5", "name": "IMG_1862.jpg", "url_private_download": "https://slack.com/files/F0AAAAAAA5/dl"},
+    ]
+
+    def fake_get(url, timeout=60):
+        class FakeResp:
+            content = url.encode()
+            headers = {"content-type": "image/jpeg"}
+            def raise_for_status(self): pass
+        return FakeResp()
+
+    monkeypatch.setattr(dumper.session, "get", fake_get)
+
+    dumper._download_files(files, tmp_path)
+
+    attachment_dir = tmp_path / "attachments"
+    downloaded = [p.name for p in attachment_dir.iterdir()]
+    assert downloaded == ["IMG_F0AAAAAAA5.jpg"]
+
+
+def test_download_files_rejects_html_response(monkeypatch, tmp_path) -> None:
+    """When the token lacks files:read scope, Slack returns an HTML login
+    page with HTTP 200. We must not save that as if it were the file."""
+    dumper = SlackDumper(
+        url="https://example.slack.com/archives/C123/p1735881234123456",
+        output=None,
+        fmt="md",
+        download_files=True,
+    )
+
+    files = [
+        {"id": "F0AAAAAAA1", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA1/dl"},
+    ]
+
+    def fake_get(url, timeout=60):
+        class FakeResp:
+            content = b"<!DOCTYPE html><html>login page</html>"
+            headers = {"content-type": "text/html; charset=utf-8"}
+            def raise_for_status(self): pass
+        return FakeResp()
+
+    monkeypatch.setattr(dumper.session, "get", fake_get)
+
+    dumper._download_files(files, tmp_path)
+
+    attachment_dir = tmp_path / "attachments"
+    # No file should be saved when the response is HTML.
+    assert not attachment_dir.exists() or not list(attachment_dir.iterdir())
+
+
 def test_transform_markdown_includes_channel_and_thread_urls(monkeypatch) -> None:
     monkeypatch.setattr(SlackDumper, "_format_ts", staticmethod(lambda ts: "2025-01-17 18:42:10"))
     dumper = SlackDumper(

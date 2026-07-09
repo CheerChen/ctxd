@@ -2,26 +2,27 @@
 
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 from ctxd.cli import main
 
 
-def test_obsidian_rejects_github_pr_url() -> None:
+@pytest.mark.parametrize("url", [
+    "https://github.com/owner/repo/pull/1",
+    "https://example.slack.com/archives/C123/p1234567890123456",
+])
+def test_obsidian_rejects_non_confluence_jira_url(url) -> None:
     runner = CliRunner()
-    result = runner.invoke(main, ["--obsidian", "-O", "https://github.com/owner/repo/pull/1"])
+    result = runner.invoke(main, ["--obsidian", "-O", url])
     assert result.exit_code != 0
     assert "only supports Confluence and Jira" in result.output
 
 
-def test_obsidian_rejects_slack_url() -> None:
+def test_obsidian_rejects_unsupported_url() -> None:
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "--obsidian", "-O",
-        "https://example.slack.com/archives/C123/p1234567890123456",
-    ])
+    result = runner.invoke(main, ["--obsidian", "-O", "https://example.com/not-supported"])
     assert result.exit_code != 0
-    assert "only supports Confluence and Jira" in result.output
 
 
 def test_obsidian_requires_output_target() -> None:
@@ -52,9 +53,3 @@ def test_obsidian_rejects_text_format() -> None:
     ])
     assert result.exit_code != 0
     assert "markdown" in result.output
-
-
-def test_obsidian_rejects_unsupported_url() -> None:
-    runner = CliRunner()
-    result = runner.invoke(main, ["--obsidian", "-O", "https://example.com/not-supported"])
-    assert result.exit_code != 0

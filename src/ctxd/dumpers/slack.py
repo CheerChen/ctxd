@@ -290,17 +290,34 @@ class SlackDumper(BaseDumper):
         attachment_dir.mkdir(parents=True, exist_ok=True)
 
         for file in files:
-            url = file.get("url_private")
+            # url_private_download is the canonical binary endpoint; fall back
+            # to url_private for older file objects that may lack it.
+            url = file.get("url_private_download") or file.get("url_private")
             name = file.get("name", "attachment")
             if not url:
                 continue
 
+            # Uniform filename: IMG_{file_id}.{ext} — stable, unique, no
+            # collision even across same-named uploads.
+            file_id = file.get("id", "unknown")
+            suffix = Path(name).suffix
+            target = attachment_dir / f"IMG_{file_id}{suffix}"
+
             try:
                 resp = self.session.get(url, timeout=60)
                 resp.raise_for_status()
-                target = attachment_dir / name
+                # Slack redirects token-less requests to an HTML login page
+                # with HTTP 200. Detect and reject so we don't save HTML as
+                # if it were the attachment.
+                content_type = resp.headers.get("content-type", "")
+                if content_type.startswith("text/html"):
+                    self.log(
+                        f"  ⚠ Failed to download {name}: got HTML instead of "
+                        f"binary (token may lack files:read scope)"
+                    )
+                    continue
                 target.write_bytes(resp.content)
-                self.log(f"  📥 Downloaded: {name}")
+                self.log(f"  📥 Downloaded: {target.name}")
             except Exception as exc:
                 self.log(f"  ⚠ Failed to download {name}: {exc}")
 

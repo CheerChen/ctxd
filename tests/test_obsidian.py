@@ -26,13 +26,10 @@ from ctxd.obsidian import (
     ("  multiple   spaces  ", "fb", "multiple spaces"),
     ("[]#^|", "page-123", "page-123"),
     ('a/b\\c:d*e?f"g<h>i', "fb", "abcdefghi"),
+    ("   ", "page-123", "page-123"),
 ])
 def test_sanitize_note_stem(raw, fallback, expected) -> None:
     assert sanitize_note_stem(raw, fallback) == expected
-
-
-def test_sanitize_note_stem_falls_back_on_whitespace() -> None:
-    assert sanitize_note_stem("   ", "page-123") == "page-123"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -48,25 +45,13 @@ def test_sanitize_attachment_name(raw, expected) -> None:
      "https://example.atlassian.net/wiki/spaces/X/pages/123/Title"),
     ("Hello World", "Hello World"),
     ("マスキング方針案", "マスキング方針案"),
-])
-def test_yaml_escape_unquoted(value, expected) -> None:
-    assert _yaml_escape(value) == expected
-
-
-@pytest.mark.parametrize("value,expected", [
     ("[PROJ-1] Summary", '"[PROJ-1] Summary"'),
     ("Hello: World", '"Hello: World"'),
+    ("", '""'),
+    ('She said: "hi"', '"She said: \\"hi\\""'),
 ])
-def test_yaml_escape_quoted(value, expected) -> None:
+def test_yaml_escape(value, expected) -> None:
     assert _yaml_escape(value) == expected
-
-
-def test_yaml_escape_empty_string() -> None:
-    assert _yaml_escape("") == '""'
-
-
-def test_yaml_escape_escapes_inner_quotes() -> None:
-    assert _yaml_escape('She said: "hi"') == '"She said: \\"hi\\""'
 
 
 def test_wrap_with_frontmatter_shape() -> None:

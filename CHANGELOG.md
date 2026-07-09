@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4]
+
+### Fixed
+* **Slack `--download-files` attachment overwrite bug** : when a thread contained multiple attachments sharing the same filename (e.g. four `image.png` uploads), all but the last were silently overwritten on disk. Attachment filenames are now uniform: `IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`), using the Slack file id as a stable, unique disambiguator. The original filename is no longer used for the saved file — only the extension is preserved.
+* **Slack `--download-files` silently saved HTML error pages as attachments** : when the Slack token lacks the `files:read` scope, `files.slack.com` responds with HTTP 200 + an HTML login page instead of the binary. ctxd now checks the `Content-Type` header and rejects `text/html` responses with a clear `⚠ Failed to download: got HTML instead of binary (token may lack files:read scope)` message, instead of writing a fake file to disk.
+* **Slack `--download-files` used wrong download endpoint** : switched from `url_private` (which returns the Slack file preview page) to `url_private_download` (the canonical binary endpoint), with `url_private` kept as a fallback for older file objects that may lack the download field.
+
 ## [0.4.3]
 
 ### Changed

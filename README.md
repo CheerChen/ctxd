@@ -191,7 +191,7 @@ When you copy a link to a specific reply (archive URL with `?thread_ts=` where t
 
 | Option | Description |
 |--------|-------------|
-| `--download-files` | Download attachments to `./attachments` |
+| `--download-files` | Download attachments to `./attachments` as `IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`); requires `files:read` scope on the Slack token |
 | `--raw` | Keep original Slack mrkdwn markup |
 
 ---

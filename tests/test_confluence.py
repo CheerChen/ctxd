@@ -196,14 +196,6 @@ def test_default_filename_uses_token_for_short_link() -> None:
 
 
 def test_resolve_short_link_follows_redirect_and_replaces_url() -> None:
-    from ctxd.dumpers.confluence import ConfluenceDumper
-
-    dumper = ConfluenceDumper(
-        url="https://example.atlassian.net/wiki/x/MIEH7",
-        output=None,
-        fmt="md",
-        quiet=True,
-    )
     dumper, _ = _make_dumper()
     # Re-point to the short link so _resolve_short_link has work to do.
     dumper.url = "https://example.atlassian.net/wiki/x/MIEH7"
@@ -226,16 +218,8 @@ def test_resolve_short_link_follows_redirect_and_replaces_url() -> None:
 
 
 def test_resolve_short_link_noop_for_long_url() -> None:
-    from ctxd.dumpers.confluence import ConfluenceDumper
-
     long_url = (
         "https://example.atlassian.net/wiki/spaces/TEST/pages/3959914800/TestPage+Title"
-    )
-    dumper = ConfluenceDumper(
-        url=long_url,
-        output=None,
-        fmt="md",
-        quiet=True,
     )
     dumper, _ = _make_dumper()
     dumper.url = long_url

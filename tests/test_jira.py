@@ -14,11 +14,8 @@ def test_parse_jira_url(url, site, key) -> None:
 
 
 def test_parse_jira_url_invalid() -> None:
-    try:
+    with pytest.raises(ValueError):
         parse_jira_url("https://example.atlassian.net/wiki/spaces/FOO")
-        assert False, "Should have raised ValueError"
-    except ValueError:
-        pass
 
 
 def test_jira_dumper_transform() -> None:

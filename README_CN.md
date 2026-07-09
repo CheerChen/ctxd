@@ -198,7 +198,7 @@ ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 
 | 参数 | 说明 |
 |------|------|
-| `--download-files` | 下载附件到 `./attachments` |
+| `--download-files` | 下载附件到 `./attachments`，文件名格式为 `IMG_{file_id}.{ext}`（如 `IMG_F0AAAAAAA1.png`）；要求 Slack token 含 `files:read` scope |
 | `--raw` | 保留原始 Slack mrkdwn 标记 |
 
 ---
