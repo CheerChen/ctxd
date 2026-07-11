@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ctxd.auth import AuthError
 from ctxd.recurse import MAX_CHILDREN_PER_LEVEL, extract_supported_urls, render_with_recurse
+from ctxd.summary import Summary
 
 import pytest
 
@@ -86,6 +87,7 @@ class _FakeDumper:
         self.fmt = "md"
         self.quiet = True
         self.verbose = False
+        self.summary = Summary()
         self._content = content
         self._fail = fail
 

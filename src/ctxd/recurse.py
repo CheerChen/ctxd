@@ -111,6 +111,10 @@ def render_with_recurse(
 
     *depth* is the remaining recursion depth (0 = no recursion).
     *seen* tracks URLs already rendered to avoid duplicate fetches across levels.
+
+    The primary dumper's ``summary`` is the canonical aggregate: child
+    dumpers' summaries are merged into it so the root summary reflects
+    the full recursion tree.
     """
     if seen is None:
         seen = set()
@@ -119,6 +123,15 @@ def render_with_recurse(
     seen.add(primary_url)
 
     content = primary_dumper.render()
+
+    # The primary resource itself counts as 1 fetched + 1 rendered.
+    # render() already set resources_fetched/resources_rendered for the
+    # primary source, but if the dumper's render() didn't set it (e.g.
+    # test stub), ensure it.
+    if primary_dumper.summary.resources_fetched == 0:
+        primary_dumper.summary.resources_fetched = 1
+    if primary_dumper.summary.resources_rendered == 0:
+        primary_dumper.summary.resources_rendered = 1
 
     if depth <= 0:
         return content
@@ -162,15 +175,33 @@ def render_with_recurse(
                     child_dumper, depth=depth - 1, seen=seen, _level=_level + 1
                 )
             appendix.append(f"> ↳ {prefix} recursed from {child_url}\n\n{child_content}")
+            # Merge the child's summary into the root so counts propagate.
+            # resources_fetched and resources_rendered accumulate (each
+            # child is a distinct source resource).  artifacts_written
+            # does NOT increase — child content is embedded into the same
+            # output artifact as the parent.
+            child_summary = child_dumper.summary
+            primary_dumper.summary.resources_fetched += child_summary.resources_fetched
+            primary_dumper.summary.resources_rendered += child_summary.resources_rendered
+            primary_dumper.summary.skipped += child_summary.skipped
+            primary_dumper.summary.failed += child_summary.failed
+            primary_dumper.summary.truncated += child_summary.truncated
+            primary_dumper.summary.notes.extend(child_summary.notes)
+            primary_dumper.summary.items.extend(child_summary.items)
         except AuthError as exc:
             appendix.append(f"> ↳ {prefix} recursed from {child_url} — skipped: {exc}")
+            primary_dumper.summary.skipped += 1
+            primary_dumper.summary.add_note(f"child {child_url} skipped: {exc}")
         except Exception as exc:
             appendix.append(f"> ↳ {prefix} recursed from {child_url} — skipped: {exc}")
+            primary_dumper.summary.failed += 1
+            primary_dumper.summary.add_note(f"child {child_url} failed: {exc}")
 
     if truncated:
         # P1: list the truncated URLs so the LLM (or a human reviewing the
         # dump) can decide whether to follow up on a specific skipped link
         # instead of seeing only an opaque count.
+        primary_dumper.summary.truncated += truncated
         truncated_urls = all_child_urls[MAX_CHILDREN_PER_LEVEL:]
         lines = [
             f"> ↳ ... {truncated} more supported link(s) truncated "

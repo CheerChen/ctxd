@@ -273,14 +273,14 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 
 ## Cross-source recursion
 
-By default, `ctxd` scans the rendered output for supported URLs (Slack, GitHub PR, Confluence, Jira) and fetches them too, appending the results as a labelled appendix. This means a Slack thread that links a Jira issue and a GitHub PR pulls all three in one command — no follow-up fetches needed.
+By default, cross-source recursion is **off** (`--recurse-depth 0`). Opt in with `--recurse-depth 1` or `2` to have `ctxd` scan the rendered output for supported URLs (Slack, GitHub PR, Confluence, Jira) and fetch them too, appending the results as a labelled appendix. This means a Slack thread that links a Jira issue and a GitHub PR pulls all three in one command — no follow-up fetches needed.
 
 ```bash
-# Default: depth=1, auto-expands linked supported URLs
+# Recursion off (default) — primary URL only
 ctxd https://app.slack.com/client/.../thread/...
 
-# Disable recursion
-ctxd <url> --no-recurse
+# Enable recursion (depth=1, auto-expands linked supported URLs)
+ctxd <url> --recurse-depth 1
 
 # Deeper recursion (max 2)
 ctxd <url> --recurse-depth 2

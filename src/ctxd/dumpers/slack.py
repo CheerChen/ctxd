@@ -51,6 +51,8 @@ class SlackDumper(BaseDumper):
         self.session.headers.update({"Authorization": f"Bearer {self.token}"})
 
     def fetch(self) -> dict:
+        self.summary.source = "slack_thread"
+        self.summary.resources_fetched = 1
         channel, thread_ts = parse_slack_thread_url(self.url)
         messages = self._fetch_thread_messages(channel, thread_ts)
         if not messages:
@@ -58,6 +60,8 @@ class SlackDumper(BaseDumper):
 
         participants = sorted({m.get("user") for m in messages if m.get("user")})
         channel_name = self._get_channel_name(channel)
+
+        self.summary.add_note(f"{len(messages)} messages, {len(participants)} participants")
 
         return {
             "channel": channel,
@@ -191,7 +195,9 @@ class SlackDumper(BaseDumper):
                 or user_id,
                 "is_bot": bool(user.get("is_bot", False)),
             }
-        except Exception:
+        except Exception as exc:
+            self.warn(f"⚠ Slack: failed to resolve user {user_id}: {exc}")
+            self.summary.add_note(f"user lookup failed: {user_id}")
             result = {
                 "id": user_id,
                 "display_name": "",
@@ -209,7 +215,9 @@ class SlackDumper(BaseDumper):
             payload = self._api_call("conversations.info", {"channel": channel_id})
             channel = payload.get("channel", {})
             name = channel.get("name") or channel_id
-        except Exception:
+        except Exception as exc:
+            self.warn(f"⚠ Slack: failed to resolve channel {channel_id}: {exc}")
+            self.summary.add_note(f"channel lookup failed: {channel_id}")
             name = channel_id
         self._channel_name_cache[channel_id] = name
         return name
@@ -295,6 +303,9 @@ class SlackDumper(BaseDumper):
             url = file.get("url_private_download") or file.get("url_private")
             name = file.get("name", "attachment")
             if not url:
+                self.warn(f"  ⚠ Skipping {name}: no download URL in file object")
+                self.summary.skipped += 1
+                self.summary.add_note(f"file skipped (no URL): {name}")
                 continue
 
             # Uniform filename: IMG_{file_id}.{ext} — stable, unique, no
@@ -311,15 +322,19 @@ class SlackDumper(BaseDumper):
                 # if it were the attachment.
                 content_type = resp.headers.get("content-type", "")
                 if content_type.startswith("text/html"):
-                    self.log(
+                    self.warn(
                         f"  ⚠ Failed to download {name}: got HTML instead of "
                         f"binary (token may lack files:read scope)"
                     )
+                    self.summary.failed += 1
+                    self.summary.add_note(f"download failed (HTML): {name}")
                     continue
                 target.write_bytes(resp.content)
                 self.log(f"  📥 Downloaded: {target.name}")
             except Exception as exc:
-                self.log(f"  ⚠ Failed to download {name}: {exc}")
+                self.warn(f"  ⚠ Failed to download {name}: {exc}")
+                self.summary.failed += 1
+                self.summary.add_note(f"download failed: {name} ({exc})")
 
     @staticmethod
     def _format_ts(ts: str) -> str:

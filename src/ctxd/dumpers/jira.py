@@ -12,6 +12,7 @@ from ctxd.dumpers.base import BaseDumper
 from ctxd.jira.api_client import JiraClient
 from ctxd.jira.converter import preprocess_jira_html
 from ctxd.jira.url_parser import parse_jira_url
+from ctxd.summary import Summary
 
 
 class JiraDumper(BaseDumper):
@@ -40,6 +41,7 @@ class JiraDumper(BaseDumper):
 
         from ctxd.obsidian import sanitize_note_stem, wrap_with_frontmatter
 
+        self.summary = Summary(source="jira")
         self.validate_auth()
         raw = self.fetch()
         key = raw["key"]
@@ -58,6 +60,9 @@ class JiraDumper(BaseDumper):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(content, encoding="utf-8")
         self.log(f"✅ Saved to {output_path}")
+        self.summary.resources_rendered = 1
+        self.summary.artifacts_written = 1
+        self._emit_and_manifest(manifest_path=output_path)
 
     def validate_auth(self) -> None:
         base_url, email, token = ensure_jira_auth()
@@ -69,6 +74,8 @@ class JiraDumper(BaseDumper):
         return f"jira-{issue_key}.{ext}"
 
     def fetch(self) -> dict:
+        self.summary.source = "jira"
+        self.summary.resources_fetched = 1
         if self.client is None:
             raise RuntimeError("Jira client not initialized")
 
@@ -76,15 +83,27 @@ class JiraDumper(BaseDumper):
         issue = self.client.get_issue(self.issue_key)
         comments = self.client.get_comments(self.issue_key)
 
+        if comments:
+            self.summary.add_note(f"{len(comments)} comments")
+
         fields = issue.get("fields", {})
         rendered = issue.get("renderedFields", {})
         names = issue.get("names", {})
 
-        # Discover custom rich-text fields
-        custom_fields = _extract_custom_fields(fields, rendered, names)
+        # Discover custom fields (rich-text + plain serializable).
+        # Omitted fields are recorded in the summary so the user knows
+        # data was dropped — never silent.
+        custom_fields, omitted_fields = _extract_custom_fields(fields, rendered, names)
         if self.verbose and custom_fields:
             for cf in custom_fields:
-                self.log(f"  📋 Custom field: {cf['name']} ({cf['key']})")
+                self.log(f"  📋 Custom field: {cf['name']} ({cf['key']}) [{cf['type']}]")
+        if omitted_fields:
+            self.warn(f"  ⚠ {len(omitted_fields)} custom field(s) omitted (unsupported type):")
+            for om in omitted_fields:
+                self.warn(f"    - {om['name']} ({om['key']}): {om['reason']}")
+                self.summary.add_note(
+                    f"custom field omitted: {om['name']} ({om['key']}) — {om['reason']}"
+                )
 
         result = {
             "key": issue.get("key", self.issue_key),
@@ -417,9 +436,25 @@ def _display_name(obj: dict | None) -> str:
 
 def _extract_custom_fields(
     fields: dict, rendered: dict, names: dict
-) -> list[dict]:
-    """Discover non-empty rich-text custom fields from renderedFields."""
-    result = []
+) -> tuple[list[dict], list[dict]]:
+    """Discover custom fields from renderedFields and raw fields.
+
+    Returns ``(custom_fields, omitted_fields)``:
+
+    - ``custom_fields``: rich-text fields (HTML rendered) and plain
+      serializable fields (str/int/float/bool/list/dict).  Each entry has
+      ``key``, ``name``, ``content`` (markdown string), and ``type``
+      (``"richtext"`` or ``"plain"``).
+    - ``omitted_fields``: fields that could not be serialized (e.g. complex
+      nested user/group objects with no rendered form).  Each entry has
+      ``key``, ``name``, and ``reason``.  The caller should record these
+      in the summary so the user knows data was dropped.
+    """
+    custom_fields: list[dict] = []
+    omitted_fields: list[dict] = []
+    seen_keys: set[str] = set()
+
+    # 1. Rich-text fields from renderedFields (existing behavior).
     for key, value in rendered.items():
         if not key.startswith("customfield_"):
             continue
@@ -428,8 +463,84 @@ def _extract_custom_fields(
         name = names.get(key, key)
         content = _html_to_md(value)
         if content:
-            result.append({"key": key, "name": name, "content": content})
-    return result
+            custom_fields.append({"key": key, "name": name, "content": content, "type": "richtext"})
+            seen_keys.add(key)
+
+    # 2. Non-rich-text custom fields from raw fields.
+    #    Export serializable values (str/int/float/bool/simple lists/dicts).
+    #    Record complex nested objects as omitted.
+    for key, value in fields.items():
+        if not key.startswith("customfield_"):
+            continue
+        if key in seen_keys:
+            continue
+        if value is None:
+            continue
+        name = names.get(key, key)
+
+        # Try to produce a readable string representation.
+        rendered_value = _serialize_plain_field(value)
+        if rendered_value is not None:
+            custom_fields.append({
+                "key": key, "name": name,
+                "content": rendered_value, "type": "plain",
+            })
+        else:
+            omitted_fields.append({
+                "key": key, "name": name,
+                "reason": f"unsupported type: {type(value).__name__}",
+            })
+
+    return custom_fields, omitted_fields
+
+
+def _serialize_plain_field(value) -> str | None:
+    """Convert a non-rich-text Jira field value to a readable string.
+
+    Returns None if the value is too complex to serialize meaningfully
+    (e.g. nested user/group objects with multiple sub-fields).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value if value.strip() else None
+    if isinstance(value, list):
+        # List of strings or simple dicts — join each element.
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                # Simple dict: try name/key/value/summary fields.
+                simple = _simple_dict_to_str(item)
+                if simple:
+                    parts.append(simple)
+                else:
+                    return None  # Too complex
+            else:
+                return None
+        return "\n".join(parts) if parts else None
+    if isinstance(value, dict):
+        simple = _simple_dict_to_str(value)
+        return simple
+    return None
+
+
+def _simple_dict_to_str(d: dict) -> str | None:
+    """Extract a readable string from a dict with common Jira key names."""
+    for field in ("name", "key", "value", "summary", "displayName"):
+        v = d.get(field)
+        if isinstance(v, str) and v.strip():
+            return v
+    # If the dict has only one string value, use it.
+    str_values = [v for v in d.values() if isinstance(v, str) and v.strip()]
+    if len(str_values) == 1:
+        return str_values[0]
+    return None
 
 
 def _blockquote(text: str) -> str:

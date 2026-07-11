@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 import threading
 from typing import Any, Callable, TypeVar
 
@@ -13,6 +14,11 @@ from ctxd.http_retry import mount_retry
 from ctxd.profiling import instrument_session
 
 _T = TypeVar("_T")
+
+
+def _warn(message: str) -> None:
+    """Diagnostic warning — always printed to stderr, never silenced."""
+    print(message, file=sys.stderr)
 
 
 class ConfluenceClient:
@@ -62,7 +68,8 @@ class ConfluenceClient:
                 resp = self.session.get(url, timeout=10)
                 resp.raise_for_status()
                 return resp.json().get("displayName", account_id)
-            except Exception:
+            except Exception as exc:
+                _warn(f"⚠ Confluence: failed to resolve user {account_id}: {exc}")
                 return account_id
 
         return self._locked_compute(self._user_cache, account_id, "user", fetch)
@@ -74,7 +81,8 @@ class ConfluenceClient:
                 resp = self.session.get(url, timeout=10)
                 resp.raise_for_status()
                 return resp.json().get("name", space_id)
-            except Exception:
+            except Exception as exc:
+                _warn(f"⚠ Confluence: failed to resolve space {space_id}: {exc}")
                 return space_id
 
         return self._locked_compute(self._space_cache, space_id, "space", fetch)

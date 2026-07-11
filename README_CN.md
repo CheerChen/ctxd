@@ -280,14 +280,14 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 
 ## 跨源递归
 
-默认情况下，`ctxd` 会扫描输出内容中出现的 supported URL（Slack / GitHub PR / Confluence / Jira），自动抓取并追加为带标签的附录。这意味着一个 Slack thread 里贴了 Jira issue 和 GitHub PR 链接时，一条命令就能把三处内容全部拉下来——不需要再手动跟进抓取。
+默认情况下，跨源递归**关闭**（`--recurse-depth 0`）。传 `--recurse-depth 1` 或 `2` 开启后，`ctxd` 会扫描输出内容中出现的 supported URL（Slack / GitHub PR / Confluence / Jira），自动抓取并追加为带标签的附录。这意味着一个 Slack thread 里贴了 Jira issue 和 GitHub PR 链接时，一条命令就能把三处内容全部拉下来——不需要再手动跟进抓取。
 
 ```bash
-# 默认 depth=1，自动展开链接中的 supported URL
+# 递归关闭（默认）——仅抓取主 URL
 ctxd https://app.slack.com/client/.../thread/...
 
-# 关闭递归
-ctxd <url> --no-recurse
+# 开启递归（depth=1，自动展开链接中的 supported URL）
+ctxd <url> --recurse-depth 1
 
 # 更深递归（最大 2）
 ctxd <url> --recurse-depth 2

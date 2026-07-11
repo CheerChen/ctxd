@@ -48,16 +48,16 @@ If auth is missing, say which key or login is required.
 
 ## Default commands
 
-Single item to stdout (cross-source recursion is on by default — supported URLs found in the output are fetched and appended automatically):
+Single item to stdout (cross-source recursion is off by default — only the primary URL is fetched):
 
 ```bash
 ctxd '<url>' -f text
 ```
 
-Disable recursion if only the primary URL is needed:
+Enable recursion to auto-expand supported URLs found in the output:
 
 ```bash
-ctxd '<url>' -f text --no-recurse
+ctxd '<url>' -f text --recurse-depth 1
 ```
 
 Confluence page tree:

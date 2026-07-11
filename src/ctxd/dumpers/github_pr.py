@@ -45,6 +45,8 @@ class GitHubPRDumper(BaseDumper):
         self.owner, self.repo, self.pr_number = parse_github_pr_url(self.url)
 
     def fetch(self) -> dict:
+        self.summary.source = "github_pr"
+        self.summary.resources_fetched = 1
         # The 5 gh calls below are independent reads — fan them out so the
         # slowest one (usually the diff) bounds wall time instead of summing.
         tasks: list[Callable[[], object]] = [
@@ -65,6 +67,19 @@ class GitHubPRDumper(BaseDumper):
         body = pr_info.get("body", "") or ""
         if self.clean_body:
             body = self.clean_pr_body(body)
+
+        # Track sub-resource counts in notes so the summary is informative.
+        sub_notes: list[str] = []
+        if timeline_comments:
+            sub_notes.append(f"{len(timeline_comments)} timeline comments")
+        if diff_comments:
+            sub_notes.append(f"{sum(len(v) for v in diff_comments.values())} inline comments")
+        if reviews:
+            sub_notes.append(f"{len(reviews)} reviews")
+        if diff_content == self._NO_DIFF:
+            sub_notes.append("diff: no differences or fetch error")
+        for n in sub_notes:
+            self.summary.add_note(n)
 
         return {
             "number": self.pr_number,
@@ -212,11 +227,18 @@ class GitHubPRDumper(BaseDumper):
         with timed("subprocess.gh"):
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
+            err = proc.stderr.strip() or proc.stdout.strip() or "gh api failed"
+            self.warn(f"⚠ GitHub API call failed ({path}): {err}")
+            self.summary.failed += 1
+            self.summary.add_note(f"API call failed ({path}): {err}")
             return []
 
         try:
             pages = json.loads(proc.stdout)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            self.warn(f"⚠ GitHub API response not valid JSON ({path}): {exc}")
+            self.summary.failed += 1
+            self.summary.add_note(f"API response not JSON ({path}): {exc}")
             return []
 
         flattened: list[dict] = []
@@ -314,6 +336,10 @@ class GitHubPRDumper(BaseDumper):
         with timed("subprocess.gh"):
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
+            err = proc.stderr.strip() or proc.stdout.strip() or "gh pr diff failed"
+            self.warn(f"⚠ GitHub PR diff fetch failed: {err}")
+            self.summary.failed += 1
+            self.summary.add_note(f"diff fetch failed: {err}")
             return ""
         return proc.stdout
 

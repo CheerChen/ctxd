@@ -221,6 +221,9 @@ def main(
                 dumper.log(f"✅ Saved to {resolved_output}")
             else:
                 sys.stdout.write(content)
+            # Recursion embeds all child content into one artifact.
+            dumper.summary.artifacts_written = 1
+            dumper._emit_and_manifest()
         finally:
             emit_report()
         return

@@ -16,6 +16,7 @@ from ctxd.confluence.converter import comments_to_markdown, extract_confluence_i
 from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, parse_short_link
 from ctxd.dumpers.base import BaseDumper
 from ctxd.profiling import timed
+from ctxd.summary import ExportResult, PageStatus, Summary
 
 
 class ConfluenceDumper(BaseDumper):
@@ -47,12 +48,16 @@ class ConfluenceDumper(BaseDumper):
         self.client = ConfluenceClient(base_url=base_url, email=email, api_token=token)
 
     def render(self) -> str:
+        self.summary = Summary(source="confluence")
         self.validate_auth()
         self._resolve_short_link()
         with timed("stage.fetch"):
             raw = self.fetch()
+        self.summary.resources_fetched = 1
         with timed("stage.transform"):
-            return self.transform(raw)
+            content = self.transform(raw)
+        self.summary.resources_rendered = 1
+        return content
 
     def _resolve_short_link(self) -> None:
         """Follow a Confluence tiny-link (``/wiki/x/<token>``) redirect once and
@@ -109,7 +114,7 @@ class ConfluenceDumper(BaseDumper):
             page = self.client.get_page(page_id)
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
-        metadata_block = self._build_metadata_block(page)
+        metadata_block = self._build_metadata_block(page, notes_out=self.summary.notes)
         markdown, _, marker_line_map = html_to_markdown(html_content or "", image_map={}, base_url=self.client.base_url)
         # Title "# {title}\n\n" = 2 lines; metadata block contributes its own newlines.
         offset = 2 + metadata_block.count("\n")
@@ -127,6 +132,7 @@ class ConfluenceDumper(BaseDumper):
             self._dump_obsidian()
             return
 
+        self.summary = Summary(source="confluence")
         self.validate_auth()
         self._resolve_short_link()
         with timed("stage.fetch"):
@@ -135,7 +141,11 @@ class ConfluenceDumper(BaseDumper):
         if not self.output:
             with timed("stage.transform"):
                 content = self.transform(raw)
+            self.summary.resources_fetched = 1
+            self.summary.resources_rendered = 1
+            self.summary.artifacts_written = 1
             sys.stdout.write(content)
+            self._emit_and_manifest()
             return
 
         output_path = Path(self.output)
@@ -157,12 +167,25 @@ class ConfluenceDumper(BaseDumper):
                 ),
                 raw["pages"],
             )
-        success = sum(1 for ok in results if ok)
 
-        self.log(f"✅ Export completed: {success}/{len(raw['pages'])} pages")
+        # Aggregate worker results in the main thread (thread-safe).
+        # Workers return ExportResult objects; they do NOT mutate self.summary.
+        for result in results:
+            self.summary.add_export_result(result)
+        self.summary.resources_fetched = len(raw["pages"])
+        self.summary.artifacts_written = self.summary.resources_rendered
+
+        self.log(f"✅ Export completed: {self.summary.resources_rendered}/{self.summary.resources_fetched} pages")
+        if self.summary.skipped:
+            self.log(f"  → {self.summary.skipped} empty page(s) skipped")
+        if self.summary.failed:
+            self.warn(f"  ✗ {self.summary.failed} page(s) failed")
         self.log(f"📁 Output: {output_path}")
 
+        self._emit_and_manifest()
+
     def _dump_obsidian(self) -> None:
+        self.summary = Summary(source="confluence")
         from ctxd.obsidian import (
             build_attachment_refs,
             refresh_attachments,
@@ -180,6 +203,7 @@ class ConfluenceDumper(BaseDumper):
         _, page_id = parse_confluence_url(self.url)
         page = self.client.get_page(page_id)
         title = str(page.get("title", "Untitled"))
+        self.summary.resources_fetched = 1
 
         if self.output:
             output_path = Path(self.output)
@@ -196,10 +220,14 @@ class ConfluenceDumper(BaseDumper):
 
         html_content = page.get("body", {}).get("storage", {}).get("value") or ""
 
+        obsidian_notes: list[str] = []
+
         try:
             attachments_meta = self.client.get_attachments(page_id)
         except Exception as exc:
-            self.log(f"⚠ Failed to fetch attachments for {page_id}: {exc}")
+            self.warn(f"⚠ Failed to fetch attachments for {page_id}: {exc}")
+            self.summary.failed += 1
+            obsidian_notes.append(f"attachments fetch failed: {exc}")
             attachments_meta = []
 
         refs = build_attachment_refs(page_id, attachments_meta, attachments_dir_rel)
@@ -216,7 +244,7 @@ class ConfluenceDumper(BaseDumper):
             if name in refs
         }
 
-        metadata_block = self._build_metadata_block(page)
+        metadata_block = self._build_metadata_block(page, notes_out=obsidian_notes)
         markdown, _, marker_line_map = html_to_markdown(
             html_content, image_map=image_map, base_url=self.client.base_url
         )
@@ -224,7 +252,9 @@ class ConfluenceDumper(BaseDumper):
         marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
         body = f"# {title}\n\n{metadata_block}{markdown}"
 
-        comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+        comments_md = self._fetch_and_format_comments(
+            page_id, marker_line_map=marker_line_map, notes_out=obsidian_notes,
+        )
         if comments_md:
             body += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
@@ -233,6 +263,9 @@ class ConfluenceDumper(BaseDumper):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(content, encoding="utf-8")
         self.log(f"✅ Saved to {output_path}")
+        self.summary.resources_rendered = 1
+        self.summary.artifacts_written = 1
+        self.summary.notes.extend(obsidian_notes)
 
         desired_refs = [refs[name] for name in sorted(download_names)]
         if desired_refs:
@@ -242,7 +275,13 @@ class ConfluenceDumper(BaseDumper):
                 )
                 self.log(f"📎 Refreshed {count} attachments in {attachments_dir_abs}")
             except Exception as exc:
-                self.log(f"⚠ Attachment refresh failed: {exc}")
+                self.warn(f"⚠ Attachment refresh failed: {exc}")
+                self.summary.failed += 1
+                self.summary.add_note(f"attachment refresh failed: {exc}")
+
+        # Pass output_path explicitly so manifest is written even when
+        # self.output is None (auto-naming with -O).
+        self._emit_and_manifest(manifest_path=output_path)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -257,22 +296,31 @@ class ConfluenceDumper(BaseDumper):
         output_dir: Path,
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
-    ) -> bool:
+    ) -> ExportResult:
+        """Export a single page.  Returns an ``ExportResult`` (thread-safe).
+
+        Does NOT mutate ``self.summary`` — the caller aggregates results
+        in the main thread to avoid concurrent access.
+        """
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
 
-        try:
-            page_id = page_data["id"]
-            title = page_data.get("title", "Untitled")
+        page_id = str(page_data.get("id", "unknown"))
+        title = page_data.get("title", "Untitled")
+        worker_notes: list[str] = []
 
+        try:
             html_content = page_data.get("body", {}).get("storage", {}).get("value")
             if html_content is None:
                 full_page = self.client.get_page(page_id)
                 html_content = full_page.get("body", {}).get("storage", {}).get("value", "")
 
             if not html_content or not html_content.strip():
-                self.log(f"  → Skipping empty page: {title}")
-                return True
+                self.warn(f"  → Skipping empty page: {title}")
+                return ExportResult(
+                    status=PageStatus.SKIPPED, page_id=page_id,
+                    title=title, reason="empty page body",
+                )
 
             safe_title = self._sanitize_filename(title)
             page_dir = output_dir / f"{page_id}_{safe_title}"
@@ -291,10 +339,11 @@ class ConfluenceDumper(BaseDumper):
                         page_dir=page_dir,
                         global_attachment_pool=global_attachment_pool,
                         pool_lock=pool_lock,
+                        notes_out=worker_notes,
                     )
 
             base_url = self.client.base_url if self.client else None
-            metadata_block = self._build_metadata_block(page_data)
+            metadata_block = self._build_metadata_block(page_data, notes_out=worker_notes)
             with timed("stage.transform"):
                 markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
             offset = 2 + metadata_block.count("\n")
@@ -302,18 +351,31 @@ class ConfluenceDumper(BaseDumper):
             markdown = f"# {title}\n\n{metadata_block}{markdown}"
 
             with timed("stage.comments"):
-                comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+                comments_md = self._fetch_and_format_comments(
+                    page_id, marker_line_map=marker_line_map, notes_out=worker_notes,
+                )
             if comments_md:
                 markdown += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
             (page_dir / "README.md").write_text(markdown, encoding="utf-8")
             self.log(f"  ✓ Saved: {page_dir / 'README.md'}")
-            return True
+            return ExportResult(
+                status=PageStatus.WRITTEN, page_id=page_id, title=title,
+                notes=worker_notes,
+            )
         except Exception as exc:
-            self.log(f"  ✗ Failed to export page {page_data.get('id')}: {exc}")
-            return False
+            self.warn(f"  ✗ Failed to export page {page_id}: {exc}")
+            return ExportResult(
+                status=PageStatus.FAILED, page_id=page_id,
+                title=title, reason=str(exc), notes=worker_notes,
+            )
 
-    def _fetch_and_format_comments(self, page_id: str, marker_line_map: dict[str, int] | None = None) -> str:
+    def _fetch_and_format_comments(
+        self,
+        page_id: str,
+        marker_line_map: dict[str, int] | None = None,
+        notes_out: list[str] | None = None,
+    ) -> str:
         if self.client is None:
             return ""
         resolve_user = self.client.get_user_display_name
@@ -338,7 +400,9 @@ class ConfluenceDumper(BaseDumper):
                 parts.append("### Inline Comments\n")
                 parts.append(comments_to_markdown(inline_comments, resolve_user=resolve_user, marker_line_map=marker_line_map))
         except Exception as exc:
-            self.log(f"    ⚠ Failed to fetch inline comments for page {page_id}: {exc}")
+            self.warn(f"    ⚠ Failed to fetch inline comments for page {page_id}: {exc}")
+            if notes_out is not None:
+                notes_out.append(f"inline comments failed (page {page_id}): {exc}")
 
         try:
             footer_comments = client.get_footer_comments(page_id)
@@ -347,7 +411,9 @@ class ConfluenceDumper(BaseDumper):
                 parts.append("### Footer Comments\n")
                 parts.append(comments_to_markdown(footer_comments, resolve_user=resolve_user))
         except Exception as exc:
-            self.log(f"    ⚠ Failed to fetch footer comments for page {page_id}: {exc}")
+            self.warn(f"    ⚠ Failed to fetch footer comments for page {page_id}: {exc}")
+            if notes_out is not None:
+                notes_out.append(f"footer comments failed (page {page_id}): {exc}")
 
         return "\n".join(parts)
 
@@ -358,9 +424,14 @@ class ConfluenceDumper(BaseDumper):
         page_dir: Path,
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
+        notes_out: list[str] | None = None,
     ) -> dict[str, str]:
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
+
+        def _note(msg: str) -> None:
+            if notes_out is not None:
+                notes_out.append(msg)
 
         image_map: dict[str, str] = {}
         try:
@@ -396,9 +467,13 @@ class ConfluenceDumper(BaseDumper):
                     continue
                 attachment = resolve(filename)
                 if not attachment:
+                    # Never-silent: referenced image not found in attachment map.
+                    self.warn(f"    ⚠ Referenced image not found in attachments: {filename}")
+                    _note(f"missing attachment: {filename}")
                     continue
                 if not attachment.get("fileId"):
-                    self.log(f"    ⚠ Skipping {filename}: no fileId in attachment metadata")
+                    self.warn(f"    ⚠ Skipping {filename}: no fileId in attachment metadata")
+                    _note(f"attachment skipped (no fileId): {filename}")
                     continue
                 download_targets.append((filename, attachment))
 
@@ -415,7 +490,8 @@ class ConfluenceDumper(BaseDumper):
                         handle.write(content)
                     return filename, True
                 except Exception as exc:
-                    self.log(f"    ⚠ Failed to download {filename}: {exc}")
+                    self.warn(f"    ⚠ Failed to download {filename}: {exc}")
+                    _note(f"image download failed: {filename} ({exc})")
                     return filename, False
 
             for filename, ok in parallel_map(download_one, download_targets):
@@ -425,7 +501,8 @@ class ConfluenceDumper(BaseDumper):
             if image_map:
                 self.log(f"    ✓ Downloaded {len(image_map)} images")
         except Exception as exc:
-            self.log(f"    ⚠ Failed to process attachments for {page_id}: {exc}")
+            self.warn(f"    ⚠ Failed to process attachments for {page_id}: {exc}")
+            _note(f"attachments processing failed (page {page_id}): {exc}")
 
         return image_map
 
@@ -434,16 +511,21 @@ class ConfluenceDumper(BaseDumper):
         lowered = filename.lower()
         return lowered.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"))
 
-    def _build_metadata_block(self, page: dict) -> str:
+    def _build_metadata_block(self, page: dict, notes_out: list[str] | None = None) -> str:
         space_id = page.get("spaceId") or ""
         if space_id and self.client is not None:
             space = self.client.get_space_name(space_id)
+            # Fallback means the lookup failed (client already warned).
+            if space == space_id and notes_out is not None:
+                notes_out.append(f"space name lookup failed: {space_id}")
         else:
             space = space_id or "Unknown"
 
         author_id = page.get("authorId") or ""
         if author_id and self.client is not None:
             author = self.client.get_user_display_name(author_id)
+            if author == author_id and notes_out is not None:
+                notes_out.append(f"user name lookup failed: {author_id}")
         else:
             author = author_id or "Unknown"
 
