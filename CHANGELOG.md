@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.5]
+
+### Added
+* **Never-silent rule (`warn` vs `log`)** : progress uses `log()` (suppressed by `-q`); data-loss paths use `warn()` which always prints to stderr and updates the summary. Applied across Slack (missing download URL, HTML/binary failures, user/channel lookup), Confluence (empty/failed pages, attachment/image/comment failures, user/space lookup), GitHub PR (API/diff failures), and Jira (unsupported custom fields).
+* **Completeness summary** : every run prints a one-line `ctxd summary:` report to stderr (always visible, including under `-q`) with `fetched` / `rendered` / `artifacts` counts plus `skipped` / `failed` / `truncated` when non-zero, and free-form notes for diagnostics. Cross-source recursion merges child summaries into the root; child content is embedded in the same artifact, so `artifacts` stays `1`.
+* **`manifest.json` for file outputs** : when writing a file or directory, a machine-readable manifest is written next to the output — `<file>.manifest.json` for single files (including Obsidian `-O` auto-naming) and `<dir>/manifest.json` for Confluence directory exports.
+* **Semantic output truncation** (`--max-chars`) : caps output length (default 100000 characters for stdout; file output unlimited unless the flag is set; `-1` unlimited). Truncation cuts at a newline boundary, closes open code fences, appends a size-aware notice, and hard-guarantees `len(output) <= limit`. Recorded in `summary.truncated` and the manifest.
+* **Attachment download size limits** (`--max-file-size`, `--max-run-size`) : streamed downloads enforce per-file (default 50 MiB) and per-run (default 500 MiB) caps via a thread-safe `RunBudget` shared across the recursion tree. `-1` disables each limit.
+* **Jira plain custom fields** : non-rich-text custom fields that serialize cleanly are exported alongside rich-text fields. Unsupported nested objects are listed as omitted with warn + summary notes instead of being dropped silently.
+* **Atomic writes** : text and binary outputs write via temp file + `os.replace` to avoid truncated artifacts on interrupt.
+* **CI workflow** : `.github/workflows/ci.yml` runs `uv sync --group dev` and `pytest` on push/PR to `master`. Doc-consistency tests lock README / README_CN / SKILL defaults against the CLI.
+
+### Changed
+* **`-q` / `--quiet` semantics** : only progress logs are silenced. Warnings and the completeness summary always reach stderr so partial exports remain observable when stderr is piped or agents run with quiet defaults.
+* **Confluence concurrent export aggregation** : per-page workers return `ExportResult` objects; the main thread aggregates into `Summary`.
+
 ## [0.4.4]
 
 ### Fixed

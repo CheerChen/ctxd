@@ -27,6 +27,7 @@ The skill assumes [Required config](#required-config) is already set up — if c
 - **CLI-first, not chat-first** — one command produces a stable Markdown artifact you can inspect, diff, archive, or feed into any model. No drip-feeding through many tool calls.
 - **Comments and metadata stay attached** — PR reviews and inline threads, Slack threading, Confluence attachments and page metadata, Jira custom fields all preserved.
 - **Bulk export is the default** — page trees, long threads, heavy PRs come out as one file. Parallel fetch across all sources (see [Performance](#performance) for numbers).
+- **Never silent on data loss** — fetch failures, skipped items, and truncations always warn on stderr and show up in the run summary / `manifest.json`, even under `-q`.
 
 ## When CLI beats connectors
 
@@ -109,12 +110,15 @@ gh auth status
 | `-o, --output <path>` | Write to file/directory (default: stdout) |
 | `-O, --auto-output` | Auto-generate output path by source (mutually exclusive with `-o`) |
 | `-f, --format text\|md` | Output format (default: `md`) |
-| `-q, --quiet` | Suppress progress logs (auto-enabled when stderr is not a TTY) |
+| `-q, --quiet` | Suppress progress logs only — warnings and the completeness summary always print (auto-enabled when stderr is not a TTY) |
 | `-v, --verbose` | Verbose logging |
 | `--profile` | Print stage / HTTP / subprocess timing summary |
 | `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
 | `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `0`=off, max `2`; opt-in with `1`/`2`) |
 | `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`; kept for explicitness) |
+| `--max-chars <N>` | Cap output characters (default: `100000` for stdout; file output unlimited unless set explicitly; `-1` = unlimited) |
+| `--max-file-size <N>` | Cap per-attachment download size in bytes (default: `52428800` = 50 MiB; `-1` = unlimited) |
+| `--max-run-size <N>` | Cap total attachment download size per run in bytes (default: `524288000` = 500 MiB; `-1` = unlimited) |
 
 Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
 
@@ -268,6 +272,37 @@ Shares authentication with Confluence (see above), so the same config applies. J
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
+
+Rich-text custom fields are exported as Markdown. Serializable plain fields (strings, numbers, booleans, simple lists/dicts) are exported too. Unsupported nested objects are omitted with a stderr warning and a note in the run summary — never dropped silently.
+
+---
+
+## Completeness summary and manifest
+
+Every run prints a one-line completeness summary to stderr (always visible, including under `-q`):
+
+```text
+ctxd summary: source=jira | fetched=1 | rendered=1 | artifacts=1
+```
+
+Counts cover source resources fetched/rendered, artifacts written, plus `skipped` / `failed` / `truncated` when non-zero. Free-form notes (e.g. omitted custom fields, failed downloads) are listed under the line.
+
+When writing to a file or directory, a machine-readable manifest is written next to the output:
+
+| Output mode | Manifest path |
+|-------------|---------------|
+| Single file (`-o issue.md` / `-O`) | `issue.md.manifest.json` |
+| Directory (Confluence tree) | `<dir>/manifest.json` |
+
+Manifest JSON mirrors the summary (counts, notes, per-item status). Cross-source recursion merges child counts into the root summary; child content is embedded in the same artifact, so `artifacts` stays `1`.
+
+---
+
+## Output integrity and limits
+
+- **Atomic writes** — text and binary files are written via temp file + rename to avoid truncated artifacts on interrupt.
+- **`--max-chars`** — truncates at a newline boundary, closes open code fences, and appends a truncation notice. Hard cap: output length never exceeds the limit. Default applies to stdout; pass the flag explicitly to also cap file output.
+- **Attachment size caps** — streamed downloads enforce per-file (`--max-file-size`) and per-run (`--max-run-size`) budgets shared across the recursion tree. Exceeded downloads warn and count as failed rather than filling the disk.
 
 ---
 

@@ -56,13 +56,7 @@ class JiraDumper(BaseDumper):
             output_path = Path.cwd() / f"{stem}.md"
 
         body = self.transform(raw)
-        # P1-5b: sanitize control characters from Jira body.
-        from ctxd.sanitize import sanitize_control_chars
-        body, removed = sanitize_control_chars(body)
-        if removed:
-            self.summary.add_note(f"sanitized {removed} control characters")
-        from ctxd.dumpers.base import _prepend_disclaimer, _apply_stdout_limit
-        body = _prepend_disclaimer(body, self.fmt)
+        from ctxd.dumpers.base import _apply_stdout_limit
         content = wrap_with_frontmatter(body, "jira", self.url, title)
         # P1-6: apply --max-chars to Obsidian file output when explicitly set.
         if self.max_chars > 0:

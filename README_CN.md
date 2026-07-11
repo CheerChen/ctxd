@@ -32,9 +32,10 @@ mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
 ## 为什么用 ctxd
 
 - **CLI 优先，不是聊天优先**：一条命令生成稳定 artifact，便于检查、diff、归档、继续喂给任意模型。
-- **批量导出是第一公民**：PR、Slack thread、Confluence page tree、Jira issue 都是“整份上下文”导出，而不是多轮零碎抓取。
+- **批量导出是第一公民**：PR、Slack thread、Confluence page tree、Jira issue 都是「整份上下文」导出，而不是多轮零碎抓取。
 - **评论和元数据完整保留**：review、inline comments、时间戳、附件、页面元数据、自定义字段都不会丢。
-- **适合 agent workflow**：`0.4.0` 起支持全源并发拉取，并带 `--profile`、`--max-concurrency`。
+- **数据丢失不静默**：抓取失败、跳过项与截断会始终打到 stderr，并反映在运行摘要 / `manifest.json` 中，即使使用了 `-q`。
+- **适合 agent workflow**：全源并发拉取，并带 `--profile`、`--max-concurrency`、完整性摘要与输出上限控制。
 
 ## 什么时候 CLI 比 connector 更合适
 
@@ -116,12 +117,15 @@ gh auth status
 | `-o, --output <path>` | 输出到文件/目录（默认 stdout） |
 | `-O, --auto-output` | 根据来源自动生成输出路径（与 `-o` 互斥） |
 | `-f, --format text\|md` | 输出格式（默认 `md`） |
-| `-q, --quiet` | 静默模式（stderr 非 TTY 时自动启用） |
+| `-q, --quiet` | 仅抑制进度日志——告警与完整性摘要始终输出（stderr 非 TTY 时自动启用） |
 | `-v, --verbose` | 详细日志 |
 | `--profile` | 打印 stage / HTTP / subprocess 耗时摘要 |
 | `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
 | `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `0`=关闭，最大 `2`；需手动 `1`/`2` 开启） |
 | `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`；保留以便显式声明） |
+| `--max-chars <N>` | 限制输出字符数（stdout 默认 `100000`；文件输出默认不限，显式传入时才生效；`-1` = 不限制） |
+| `--max-file-size <N>` | 单个附件下载上限，单位字节（默认 `52428800` = 50 MiB；`-1` = 不限制） |
+| `--max-run-size <N>` | 单次运行附件下载总量上限，单位字节（默认 `524288000` = 500 MiB；`-1` = 不限制） |
 
 参数可以放在 URL 前后（如 `ctxd -q <url>` 和 `ctxd <url> -q` 均可）。
 
@@ -275,6 +279,37 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
 ```
+
+富文本自定义字段会导出为 Markdown；可序列化的普通字段（字符串、数字、布尔、简单列表/字典）也会导出。无法序列化的嵌套对象会省略，并在 stderr 告警、写入运行摘要 notes——不会静默丢弃。
+
+---
+
+## 完整性摘要与 manifest
+
+每次运行都会向 stderr 打印一行完整性摘要（始终可见，含 `-q`）：
+
+```text
+ctxd summary: source=jira | fetched=1 | rendered=1 | artifacts=1
+```
+
+计数包括抓取/渲染的源资源数、写出的 artifact 数；`skipped` / `failed` / `truncated` 非零时也会出现。补充说明（例如省略的自定义字段、下载失败）列在该行下方 notes 中。
+
+写入文件或目录时，会在输出旁生成机器可读的 manifest：
+
+| 输出模式 | Manifest 路径 |
+|----------|---------------|
+| 单文件（`-o issue.md` / `-O`） | `issue.md.manifest.json` |
+| 目录（Confluence 页面树） | `<dir>/manifest.json` |
+
+manifest JSON 与摘要字段一致（计数、notes、逐项状态）。跨源递归会把子项计数合并到根摘要；子内容嵌在同一 artifact 内，因此 `artifacts` 仍为 `1`。
+
+---
+
+## 输出完整性与上限
+
+- **原子写入**：文本与二进制均经临时文件 + rename 落盘，避免中断时留下半截文件。
+- **`--max-chars`**：在换行边界截断，闭合未结束的代码围栏，并附加截断说明。硬上限：输出长度不超过设定值。默认作用于 stdout；显式传入时才限制文件输出。
+- **附件体积上限**：流式下载按单文件（`--max-file-size`）与单次运行总量（`--max-run-size`）计费，预算在递归树内共享。超限会告警并计入 failed，而不是写满磁盘。
 
 ---
 

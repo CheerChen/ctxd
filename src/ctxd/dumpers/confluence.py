@@ -57,11 +57,6 @@ class ConfluenceDumper(BaseDumper):
         self.summary.resources_fetched = 1
         with timed("stage.transform"):
             content = self.transform(raw)
-        # P1-5b: sanitize control characters from fetched content.
-        from ctxd.sanitize import sanitize_control_chars
-        content, removed = sanitize_control_chars(content)
-        if removed:
-            self.summary.add_note(f"sanitized {removed} control characters")
         self.summary.resources_rendered = 1
         return content
 
@@ -147,11 +142,7 @@ class ConfluenceDumper(BaseDumper):
         if not self.output:
             with timed("stage.transform"):
                 content = self.transform(raw)
-            from ctxd.dumpers.base import _apply_stdout_limit, _prepend_disclaimer, sanitize_control_chars
-            content, removed = sanitize_control_chars(content)
-            if removed:
-                self.summary.add_note(f"sanitized {removed} control characters")
-            content = _prepend_disclaimer(content, self.fmt)
+            from ctxd.dumpers.base import _apply_stdout_limit
             content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="stdout")
             self.summary.resources_fetched = 1
             self.summary.resources_rendered = 1
@@ -272,14 +263,7 @@ class ConfluenceDumper(BaseDumper):
         if comments_md:
             body += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
-        # P1-5b: sanitize control characters from Obsidian body.
-        from ctxd.sanitize import sanitize_control_chars
-        body, removed = sanitize_control_chars(body)
-        if removed:
-            obsidian_notes.append(f"sanitized {removed} control characters")
-
-        from ctxd.dumpers.base import _prepend_disclaimer, _apply_stdout_limit
-        body = _prepend_disclaimer(body, self.fmt)
+        from ctxd.dumpers.base import _apply_stdout_limit
         content = wrap_with_frontmatter(body, "confluence", self.url, title)
         # P1-6: apply --max-chars to Obsidian file output when explicitly set.
         if self.max_chars > 0:
@@ -387,16 +371,8 @@ class ConfluenceDumper(BaseDumper):
             if comments_md:
                 markdown += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
-            # P1-5b: sanitize control characters from page content.
-            from ctxd.sanitize import sanitize_control_chars
-            markdown, removed = sanitize_control_chars(markdown)
-            if removed:
-                worker_notes.append(f"sanitized {removed} control characters")
-
-            # P1-4: prepend data disclaimer to each page file.
-            from ctxd.dumpers.base import _atomic_write_text, _apply_stdout_limit, _prepend_disclaimer
+            from ctxd.dumpers.base import _atomic_write_text, _apply_stdout_limit
             from ctxd.summary import Summary as _Summary
-            markdown = _prepend_disclaimer(markdown, self.fmt)
             # P1-6: apply --max-chars to file output when explicitly set.
             # Use a thread-local Summary so concurrent workers don't race
             # on self.summary.  The truncated count is propagated via

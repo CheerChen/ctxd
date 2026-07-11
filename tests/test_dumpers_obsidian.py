@@ -73,8 +73,6 @@ def test_confluence_obsidian_writes_frontmatter_and_body(tmp_path: Path) -> None
     assert "# Design Doc\n" in content
     assert "## Metadata" in content
     assert "hello" in content
-    # P1-4: data disclaimer present in body
-    assert "ctxd: this is fetched data" in content
 
 
 def test_confluence_obsidian_auto_output_uses_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -248,8 +246,6 @@ def test_jira_obsidian_writes_frontmatter_and_body(tmp_path: Path) -> None:
     assert "\n---\n" in content  # frontmatter closing
     assert "# [PROJ-1] Investigate masking\n" in content
     assert "Plain text description." in content
-    # P1-4: data disclaimer present in body
-    assert "ctxd: this is fetched data" in content
 
 
 def test_jira_obsidian_auto_output_uses_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

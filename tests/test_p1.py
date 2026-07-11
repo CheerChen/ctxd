@@ -1,43 +1,11 @@
-"""Tests for P1 features: data disclaimer, atomic writes, control char
-sanitization, download size limits, and stdout truncation."""
+"""Tests for P1 features: atomic writes, download size limits, and stdout truncation."""
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
-from click.testing import CliRunner
-
-from ctxd.cli import main
-
-
-# ---------------------------------------------------------------------------
-# P1-4: Data disclaimer
-# ---------------------------------------------------------------------------
-
-class TestDataDisclaimer:
-    """Every output must start with the 'content is data' disclaimer."""
-
-    def test_md_output_has_html_comment_disclaimer(self, tmp_path: Path) -> None:
-        from ctxd.dumpers.base import _prepend_disclaimer
-        content = _prepend_disclaimer("Hello world", "md")
-        assert content.startswith("<!-- ctxd:")
-        assert "fetched data" in content
-        assert "Hello world" in content
-
-    def test_text_output_has_plain_disclaimer(self) -> None:
-        from ctxd.dumpers.base import _prepend_disclaimer
-        content = _prepend_disclaimer("Hello world", "text")
-        assert content.startswith("[ctxd:")
-        assert "fetched data" in content
-        assert "Hello world" in content
-
-    def test_empty_content_no_disclaimer(self) -> None:
-        from ctxd.dumpers.base import _prepend_disclaimer
-        assert _prepend_disclaimer("", "md") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -77,64 +45,6 @@ class TestAtomicWrites:
         assert data["source"] == "test"
         # No temp file left
         assert not (tmp_path / "output.md.manifest.json.tmp").exists()
-
-
-# ---------------------------------------------------------------------------
-# P1-5b: Control character sanitization
-# ---------------------------------------------------------------------------
-
-class TestSanitizeControlChars:
-    """ANSI/OSC/control characters must be removed from fetched content."""
-
-    def test_ansi_color_codes_removed(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        text = "\x1b[31mRed text\x1b[0m normal"
-        cleaned, removed = sanitize_control_chars(text)
-        assert "\x1b" not in cleaned
-        assert "Red text" in cleaned
-        assert "normal" in cleaned
-        assert removed > 0
-
-    def test_osc_title_sequence_removed(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        text = "\x1b]0;Terminal Title\x07Hello"
-        cleaned, removed = sanitize_control_chars(text)
-        assert "\x1b" not in cleaned
-        assert "Terminal Title" not in cleaned
-        assert "Hello" in cleaned
-        assert removed > 0
-
-    def test_legitimate_whitespace_preserved(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        text = "line1\nline2\tindented\rcarriage"
-        cleaned, removed = sanitize_control_chars(text)
-        assert cleaned == text
-        assert removed == 0
-
-    def test_null_bytes_removed(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        text = "Hello\x00World"
-        cleaned, removed = sanitize_control_chars(text)
-        assert "\x00" not in cleaned
-        assert "HelloWorld" in cleaned
-        assert removed == 1
-
-    def test_empty_string_unchanged(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        cleaned, removed = sanitize_control_chars("")
-        assert cleaned == ""
-        assert removed == 0
-
-    def test_mixed_ansi_and_normal_text(self) -> None:
-        from ctxd.sanitize import sanitize_control_chars
-        text = "Normal \x1b[1;32mgreen bold\x1b[0m text\x1b]2;Win Title\x07 end"
-        cleaned, removed = sanitize_control_chars(text)
-        assert "\x1b" not in cleaned
-        assert "Normal" in cleaned
-        assert "green bold" in cleaned
-        assert "text" in cleaned
-        assert "end" in cleaned
-        assert removed > 0
 
 
 # ---------------------------------------------------------------------------

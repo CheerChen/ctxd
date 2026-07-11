@@ -3,10 +3,8 @@
 Verifies:
 1. CLI parameters --max-chars / --max-file-size / --max-run-size are wired
 2. Truncation enters summary.truncated + notes + closes code fences
-3. Control char sanitization covers all output paths
-4. RunBudget is shared across calls (not reset per batch)
-5. Atomic writes protect existing files on failure
-6. Data disclaimer appears in Confluence directory page files
+3. RunBudget is shared across calls (not reset per batch)
+4. Atomic writes protect existing files on failure
 """
 
 from __future__ import annotations
@@ -141,107 +139,7 @@ class TestTruncationSummary:
 
 
 # ---------------------------------------------------------------------------
-# Blocking #3: Control char sanitization covers all paths
-# ---------------------------------------------------------------------------
-
-class TestSanitizationAllPaths:
-    """Verify sanitize_control_chars is called in every output path,
-    not just BaseDumper.render()."""
-
-    def test_confluence_directory_pages_sanitized(self, tmp_path: Path, monkeypatch) -> None:
-        """Confluence directory export must sanitize each page."""
-        from ctxd.dumpers.confluence import ConfluenceDumper
-
-        d = ConfluenceDumper(
-            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/Root",
-            output=str(tmp_path / "export"), fmt="md", recursive=True,
-        )
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
-        d.client = MagicMock()
-        d.client.base_url = "https://test.atlassian.net"
-
-        # Page with ANSI control characters in content
-        d.client.get_page = MagicMock(return_value={
-            "id": "123", "title": "Root",
-            "body": {"storage": {"value": "<p>\x1b[31mRed\x1b[0m text</p>"}},
-        })
-        d.client.get_descendants = MagicMock(return_value=[])
-        d.client.get_inline_comments = MagicMock(return_value=[])
-        d.client.get_footer_comments = MagicMock(return_value=[])
-        d.client.get_space_name = MagicMock(return_value="SPACE")
-        d.client.get_user_display_name = MagicMock(return_value="Author")
-        d.client.get_attachments = MagicMock(return_value=[])
-
-        d.dump()
-
-        page_file = tmp_path / "export" / "123_Root" / "README.md"
-        content = page_file.read_text()
-        assert "\x1b" not in content
-        assert "Red" in content
-        assert "text" in content
-
-    def test_confluence_obsidian_sanitized(self, tmp_path: Path, monkeypatch) -> None:
-        """Confluence Obsidian export must sanitize body."""
-        from ctxd.dumpers.confluence import ConfluenceDumper
-
-        d = ConfluenceDumper(
-            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/Title",
-            output=str(tmp_path / "note.md"), fmt="md",
-        )
-        d.obsidian_mode = True
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
-        d.client = MagicMock()
-        d.client.base_url = "https://test.atlassian.net"
-        d.client.get_page = MagicMock(return_value={
-            "id": "123", "title": "Test",
-            "body": {"storage": {"value": "<p>\x1b[32mGreen\x1b[0m</p>"}},
-        })
-        d.client.get_inline_comments = MagicMock(return_value=[])
-        d.client.get_footer_comments = MagicMock(return_value=[])
-        d.client.get_space_name = MagicMock(return_value="S")
-        d.client.get_user_display_name = MagicMock(return_value="A")
-        d.client.get_attachments = MagicMock(return_value=[])
-
-        d.dump()
-
-        content = (tmp_path / "note.md").read_text()
-        assert "\x1b" not in content
-        assert "Green" in content
-
-    def test_jira_obsidian_sanitized(self, tmp_path: Path, monkeypatch) -> None:
-        """Jira Obsidian export must sanitize body."""
-        from ctxd.dumpers.jira import JiraDumper
-
-        d = JiraDumper(
-            url="https://test.atlassian.net/browse/TEST-1",
-            output=str(tmp_path / "note.md"), fmt="md",
-            obsidian_mode=True,
-        )
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        d.client = MagicMock()
-        d.client.get_issue = MagicMock(return_value={
-            "key": "TEST-1",
-            "fields": {
-                "summary": "Test",
-                "status": {"name": "Open"},
-                "description": "\x1b[31mRed issue\x1b[0m",
-            },
-            "renderedFields": {"description": "<p>\x1b[31mRed issue\x1b[0m</p>"},
-            "names": {},
-        })
-        d.client.get_comments = MagicMock(return_value=[])
-
-        d.dump()
-
-        content = (tmp_path / "note.md").read_text()
-        assert "\x1b" not in content
-        assert "Red issue" in content
-
-
-# ---------------------------------------------------------------------------
-# Blocking #4: RunBudget shared across calls
+# Blocking #3: RunBudget shared across calls
 # ---------------------------------------------------------------------------
 
 class TestRunBudgetShared:
@@ -335,39 +233,3 @@ class TestAtomicWriteFailure:
 
         assert path.read_bytes() == b"original"
         assert not (tmp_path / "image.png.tmp").exists()
-
-
-# ---------------------------------------------------------------------------
-# Blocking #6: Disclaimer in Confluence directory files
-# ---------------------------------------------------------------------------
-
-class TestDisclaimerInDirectoryFiles:
-    """Each README.md in a Confluence directory export must have the
-    data disclaimer."""
-
-    def test_confluence_page_has_disclaimer(self, tmp_path: Path, monkeypatch) -> None:
-        from ctxd.dumpers.confluence import ConfluenceDumper
-
-        d = ConfluenceDumper(
-            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/Root",
-            output=str(tmp_path / "export"), fmt="md", recursive=True,
-        )
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
-        d.client = MagicMock()
-        d.client.base_url = "https://test.atlassian.net"
-        d.client.get_page = MagicMock(return_value={
-            "id": "123", "title": "Root",
-            "body": {"storage": {"value": "<p>content</p>"}},
-        })
-        d.client.get_descendants = MagicMock(return_value=[])
-        d.client.get_inline_comments = MagicMock(return_value=[])
-        d.client.get_footer_comments = MagicMock(return_value=[])
-        d.client.get_space_name = MagicMock(return_value="S")
-        d.client.get_user_display_name = MagicMock(return_value="A")
-        d.client.get_attachments = MagicMock(return_value=[])
-
-        d.dump()
-
-        page_content = (tmp_path / "export" / "123_Root" / "README.md").read_text()
-        assert "ctxd: this is fetched data" in page_content
