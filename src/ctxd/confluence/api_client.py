@@ -211,7 +211,7 @@ class ConfluenceClient:
 
         return all_children
 
-    def download_attachment(self, file_id: str, page_id: str) -> bytes:
+    def download_attachment(self, file_id: str, page_id: str, max_bytes: int | None = None) -> bytes:
         # The legacy /wiki/download/attachments/... endpoint rejects API token
         # Basic auth with 401 (its WWW-Authenticate hint demands OAuth). The
         # working path is the Atlassian Media Service, which accepts a per-page
@@ -221,9 +221,34 @@ class ConfluenceClient:
             f"https://api.media.atlassian.com/file/{file_id}/binary"
             f"?token={token}&client={client_id}&collection={collection_id}"
         )
-        resp = self._media_session.get(url, timeout=60)
+        resp = self._media_session.get(url, timeout=60, stream=True)
         resp.raise_for_status()
-        return resp.content
+        # Check Content-Length against per-file limit before downloading.
+        # max_bytes < 0 or None means unlimited.
+        if max_bytes is not None and max_bytes >= 0:
+            content_length = int(resp.headers.get("Content-Length", 0))
+            if content_length and content_length > max_bytes:
+                resp.close()
+                from ctxd.download_limits import DownloadLimitExceeded
+                raise DownloadLimitExceeded(
+                    f"file too large: {content_length} > {max_bytes} bytes"
+                )
+        # Stream-download with size enforcement.
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if max_bytes is not None and max_bytes >= 0 and total > max_bytes:
+                    raise DownloadLimitExceeded(
+                        f"file too large: streamed {total} > {max_bytes} bytes"
+                    )
+                chunks.append(chunk)
+        finally:
+            resp.close()
+        return b"".join(chunks)
 
     def _get_media_token(self, page_id: str) -> tuple[str, str, str]:
         def fetch() -> tuple[str, str, str]:

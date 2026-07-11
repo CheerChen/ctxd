@@ -24,11 +24,14 @@ def test_download_files_disambiguates_same_name(monkeypatch, tmp_path) -> None:
         {"id": "F0AAAAAAA4", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA4/dl", "url_private": "https://slack.com/files/F0AAAAAAA4"},
     ]
 
-    def fake_get(url, timeout=60):
+    def fake_get(url, timeout=60, **kw):
         class FakeResp:
             content = url.encode()
             headers = {"content-type": "image/png"}
             def raise_for_status(self): pass
+            def iter_content(self, chunk_size=8192):
+                yield self.content
+            def close(self): pass
         return FakeResp()
 
     monkeypatch.setattr(dumper.session, "get", fake_get)
@@ -60,11 +63,14 @@ def test_download_files_always_appends_file_id(monkeypatch, tmp_path) -> None:
         {"id": "F0AAAAAAA5", "name": "IMG_1862.jpg", "url_private_download": "https://slack.com/files/F0AAAAAAA5/dl"},
     ]
 
-    def fake_get(url, timeout=60):
+    def fake_get(url, timeout=60, **kw):
         class FakeResp:
             content = url.encode()
             headers = {"content-type": "image/jpeg"}
             def raise_for_status(self): pass
+            def iter_content(self, chunk_size=8192):
+                yield self.content
+            def close(self): pass
         return FakeResp()
 
     monkeypatch.setattr(dumper.session, "get", fake_get)
@@ -90,11 +96,12 @@ def test_download_files_rejects_html_response(monkeypatch, tmp_path) -> None:
         {"id": "F0AAAAAAA1", "name": "image.png", "url_private_download": "https://slack.com/files/F0AAAAAAA1/dl"},
     ]
 
-    def fake_get(url, timeout=60):
+    def fake_get(url, timeout=60, **kw):
         class FakeResp:
             content = b"<!DOCTYPE html><html>login page</html>"
             headers = {"content-type": "text/html; charset=utf-8"}
             def raise_for_status(self): pass
+            def close(self): pass
         return FakeResp()
 
     monkeypatch.setattr(dumper.session, "get", fake_get)

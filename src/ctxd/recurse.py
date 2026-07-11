@@ -74,26 +74,46 @@ class _RecurseOpts:
     fmt: str
     quiet: bool
     verbose: bool
+    max_chars: int = 0
+    max_file_size: int = 0
+    max_run_size: int = 0
+    run_budget: object = None  # Shared RunBudget across all dumpers in the recursion tree
 
 
 def _build_dumper(url: str, opts: _RecurseOpts):
     """Construct the appropriate dumper for *url* with default source-specific flags."""
+    from ctxd.download_limits import DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_RUN_BYTES
+
+    # Resolve size limits: 0 means use module default.
+    max_file_size = opts.max_file_size if opts.max_file_size != 0 else DEFAULT_MAX_FILE_BYTES
+    max_run_size = opts.max_run_size if opts.max_run_size != 0 else DEFAULT_MAX_RUN_BYTES
+
     source = detect(url)
     if source is Source.SLACK_THREAD:
-        return SlackDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose
+        d = SlackDumper(
+            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
+            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
         )
-    if source is Source.GITHUB_PR:
-        return GitHubPRDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose
+    elif source is Source.GITHUB_PR:
+        d = GitHubPRDumper(
+            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
+            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
         )
-    if source is Source.CONFLUENCE:
-        return ConfluenceDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose
+    elif source is Source.CONFLUENCE:
+        d = ConfluenceDumper(
+            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
+            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
         )
-    return JiraDumper(
-        url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose
-    )
+    else:
+        d = JiraDumper(
+            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
+            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
+        )
+    # Share the parent's run budget so all downloads in the recursion
+    # tree count against the same per-run cap.
+    if opts.run_budget is not None:
+        d._run_budget = opts.run_budget
+    return d
 
 
 def _log(quiet: bool, message: str) -> None:
@@ -154,7 +174,14 @@ def render_with_recurse(
         return content
 
     opts = _RecurseOpts(
-        fmt=primary_dumper.fmt, quiet=primary_dumper.quiet, verbose=primary_dumper.verbose
+        fmt=primary_dumper.fmt, quiet=primary_dumper.quiet, verbose=primary_dumper.verbose,
+        max_chars=getattr(primary_dumper, "max_chars", 0),
+        max_file_size=getattr(primary_dumper, "max_file_size", 0),
+        max_run_size=getattr(primary_dumper, "max_run_size", 0),
+        # Use the run_budget property (not _run_budget) so it is lazily
+        # initialised — reading the private attribute directly would
+        # return None when the parent hasn't downloaded anything yet.
+        run_budget=primary_dumper.run_budget if hasattr(primary_dumper, "run_budget") else None,
     )
 
     appendix: list[str] = []

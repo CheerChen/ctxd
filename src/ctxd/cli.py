@@ -50,6 +50,15 @@ from ctxd.router import Source, detect
               help="Cross-source recursion depth: expand supported URLs found in the output (0=off, default; 1-2 opt-in)")
 @click.option("--no-recurse", is_flag=True, default=False,
               help="Disable cross-source recursion (equivalent to --recurse-depth 0; kept for explicitness)")
+@click.option("--max-chars", "max_chars", type=int, default=0,
+              help="Max output characters for stdout (default: 100000). "
+                   "Use -1 for unlimited.  File output is unlimited unless this is set.")
+@click.option("--max-file-size", "max_file_size", type=int, default=0,
+              help="Max per-file download size in bytes for attachments (default: 52428800 = 50MiB). "
+                   "Use -1 for unlimited.")
+@click.option("--max-run-size", "max_run_size", type=int, default=0,
+              help="Max total download size in bytes for a single ctxd run (default: 524288000 = 500MiB). "
+                   "Use -1 for unlimited.")
 @click.version_option(__version__, prog_name="ctxd")
 @click.pass_context
 def main(
@@ -75,6 +84,9 @@ def main(
     max_concurrency: int,
     recurse_depth: int,
     no_recurse: bool,
+    max_chars: int,
+    max_file_size: int,
+    max_run_size: int,
 ) -> None:
     """Unified context dumper for GitHub PR, Slack thread, Confluence, and Jira.
 
@@ -89,6 +101,12 @@ def main(
     if profile:
         enable_profiling()
     configure_concurrency(max_concurrency)
+
+    # Resolve size limits: CLI default=0 means "use module default".
+    # Negative means unlimited.
+    from ctxd.download_limits import DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_RUN_BYTES
+    resolved_max_file_size = max_file_size if max_file_size != 0 else DEFAULT_MAX_FILE_BYTES
+    resolved_max_run_size = max_run_size if max_run_size != 0 else DEFAULT_MAX_RUN_BYTES
 
     if shell:
         raise click.UsageError(f"Unexpected argument: {shell}")
@@ -146,6 +164,9 @@ def main(
             debug=debug,
             obsidian_mode=obsidian,
             obsidian_auto_output=auto_output and obsidian,
+            max_chars=max_chars,
+            max_file_size=resolved_max_file_size,
+            max_run_size=resolved_max_run_size,
         )
     elif source is Source.GITHUB_PR:
         dumper = GitHubPRDumper(
@@ -157,6 +178,9 @@ def main(
             diff_mode=diff_mode,
             clean_body=clean_body,
             no_bots=no_bots,
+            max_chars=max_chars,
+            max_file_size=resolved_max_file_size,
+            max_run_size=resolved_max_run_size,
         )
     elif source is Source.JIRA:
         dumper = JiraDumper(
@@ -168,6 +192,9 @@ def main(
             debug=debug,
             obsidian_mode=obsidian,
             obsidian_auto_output=auto_output and obsidian,
+            max_chars=max_chars,
+            max_file_size=resolved_max_file_size,
+            max_run_size=resolved_max_run_size,
         )
     else:
         dumper = SlackDumper(
@@ -178,6 +205,9 @@ def main(
             verbose=verbose,
             download_files=download_files,
             raw=raw,
+            max_chars=max_chars,
+            max_file_size=resolved_max_file_size,
+            max_run_size=resolved_max_run_size,
         )
 
     if no_recurse:
@@ -216,10 +246,16 @@ def main(
                 raise click.ClickException(str(exc)) from exc
 
             if resolved_output:
-                with open(resolved_output, "w", encoding="utf-8") as handle:
-                    handle.write(content)
+                from ctxd.dumpers.base import _atomic_write_text, _apply_stdout_limit, _prepend_disclaimer
+                content = _prepend_disclaimer(content, dumper.fmt)
+                if dumper.max_chars > 0:
+                    content = _apply_stdout_limit(content, dumper.max_chars, dumper.summary, channel="file")
+                _atomic_write_text(resolved_output, content)
                 dumper.log(f"✅ Saved to {resolved_output}")
             else:
+                from ctxd.dumpers.base import _apply_stdout_limit, _prepend_disclaimer
+                content = _prepend_disclaimer(content, dumper.fmt)
+                content = _apply_stdout_limit(content, dumper.max_chars, dumper.summary, channel="stdout")
                 sys.stdout.write(content)
             # Recursion embeds all child content into one artifact.
             dumper.summary.artifacts_written = 1

@@ -26,8 +26,9 @@ class JiraDumper(BaseDumper):
         debug: bool = False,
         obsidian_mode: bool = False,
         obsidian_auto_output: bool = False,
+        **kwargs,
     ):
-        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
+        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.client: JiraClient | None = None
         self.issue_key: str = ""
         self.debug = debug
@@ -55,10 +56,20 @@ class JiraDumper(BaseDumper):
             output_path = Path.cwd() / f"{stem}.md"
 
         body = self.transform(raw)
+        # P1-5b: sanitize control characters from Jira body.
+        from ctxd.sanitize import sanitize_control_chars
+        body, removed = sanitize_control_chars(body)
+        if removed:
+            self.summary.add_note(f"sanitized {removed} control characters")
+        from ctxd.dumpers.base import _prepend_disclaimer, _apply_stdout_limit
+        body = _prepend_disclaimer(body, self.fmt)
         content = wrap_with_frontmatter(body, "jira", self.url, title)
+        # P1-6: apply --max-chars to Obsidian file output when explicitly set.
+        if self.max_chars > 0:
+            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="file")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(content, encoding="utf-8")
+        from ctxd.dumpers.base import _atomic_write_text
+        _atomic_write_text(output_path, content)
         self.log(f"✅ Saved to {output_path}")
         self.summary.resources_rendered = 1
         self.summary.artifacts_written = 1
@@ -418,7 +429,8 @@ class JiraDumper(BaseDumper):
             parts.append(rendered_body or "(no rendered body)")
             parts.append("\n\n")
 
-        debug_path.write_text("".join(parts), encoding="utf-8")
+        from ctxd.dumpers.base import _atomic_write_text
+        _atomic_write_text(debug_path, "".join(parts))
         self.log(f"🔍 Debug HTML saved to {debug_path}")
 
 

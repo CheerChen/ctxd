@@ -98,15 +98,26 @@ def refresh_attachments(
     page_id: str,
     desired_refs: list[AttachmentRef],
     attachments_dir_abs: Path,
+    max_bytes: int | None = None,
+    run_budget=None,
 ) -> int:
     attachments_dir_abs.mkdir(parents=True, exist_ok=True)
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"ctxd-obsidian-{page_id}-"))
 
     try:
+        from ctxd.download_limits import DEFAULT_MAX_FILE_BYTES, DownloadLimitExceeded
+        if max_bytes is None:
+            max_bytes = DEFAULT_MAX_FILE_BYTES
         staged: list[tuple[Path, Path]] = []
         for ref in desired_refs:
             tmp_path = tmp_dir / ref.target_name
-            tmp_path.write_bytes(client.download_attachment(file_id=ref.file_id, page_id=ref.page_id))
+            content = client.download_attachment(
+                file_id=ref.file_id, page_id=ref.page_id,
+                max_bytes=max_bytes,
+            )
+            if run_budget is not None:
+                run_budget.check_and_reserve(len(content))
+            tmp_path.write_bytes(content)
             staged.append((tmp_path, attachments_dir_abs / ref.target_name))
 
         for tmp_path, target_path in staged:

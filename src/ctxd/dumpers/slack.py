@@ -26,8 +26,9 @@ class SlackDumper(BaseDumper):
         verbose: bool = False,
         download_files: bool = False,
         raw: bool = False,
+        **kwargs,
     ):
-        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
+        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.download_files = download_files
         self.raw = raw
         self.token = ""
@@ -294,6 +295,9 @@ class SlackDumper(BaseDumper):
         return lines
 
     def _download_files(self, files: list[dict], attachment_base_dir: Path) -> None:
+        from ctxd.download_limits import DownloadLimitExceeded
+        from ctxd.dumpers.base import _atomic_write_bytes
+
         attachment_dir = attachment_base_dir / "attachments"
         attachment_dir.mkdir(parents=True, exist_ok=True)
 
@@ -315,13 +319,14 @@ class SlackDumper(BaseDumper):
             target = attachment_dir / f"IMG_{file_id}{suffix}"
 
             try:
-                resp = self.session.get(url, timeout=60)
+                resp = self.session.get(url, timeout=60, stream=True)
                 resp.raise_for_status()
                 # Slack redirects token-less requests to an HTML login page
                 # with HTTP 200. Detect and reject so we don't save HTML as
                 # if it were the attachment.
                 content_type = resp.headers.get("content-type", "")
                 if content_type.startswith("text/html"):
+                    resp.close()
                     self.warn(
                         f"  ⚠ Failed to download {name}: got HTML instead of "
                         f"binary (token may lack files:read scope)"
@@ -329,8 +334,41 @@ class SlackDumper(BaseDumper):
                     self.summary.failed += 1
                     self.summary.add_note(f"download failed (HTML): {name}")
                     continue
-                target.write_bytes(resp.content)
+                # Check Content-Length against per-file limit before downloading.
+                # max_file_size < 0 means unlimited.
+                content_length = int(resp.headers.get("Content-Length", 0))
+                if self.max_file_size >= 0 and content_length and content_length > self.max_file_size:
+                    resp.close()
+                    self.warn(
+                        f"  ⚠ Skipping {name}: file too large "
+                        f"({content_length} > {self.max_file_size} bytes)"
+                    )
+                    self.summary.skipped += 1
+                    self.summary.add_note(f"file skipped (size limit): {name}")
+                    continue
+                # Stream-download with size enforcement.
+                chunks: list[bytes] = []
+                total = 0
+                try:
+                    for chunk in resp.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if self.max_file_size >= 0 and total > self.max_file_size:
+                            raise DownloadLimitExceeded(
+                                f"file too large: streamed {total} > {self.max_file_size} bytes"
+                            )
+                        chunks.append(chunk)
+                finally:
+                    resp.close()
+                content = b"".join(chunks)
+                self.run_budget.check_and_reserve(len(content))
+                _atomic_write_bytes(target, content)
                 self.log(f"  📥 Downloaded: {target.name}")
+            except DownloadLimitExceeded as exc:
+                self.warn(f"  ⚠ Skipping {name}: {exc}")
+                self.summary.skipped += 1
+                self.summary.add_note(f"file skipped (size limit): {name} ({exc})")
             except Exception as exc:
                 self.warn(f"  ⚠ Failed to download {name}: {exc}")
                 self.summary.failed += 1

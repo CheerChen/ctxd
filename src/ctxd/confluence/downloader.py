@@ -21,6 +21,7 @@ class ImageDownloader:
         return filename.split("?")[0]
 
     def _download_single(self, url: str) -> tuple[str, str | None]:
+        tmp_path = None
         try:
             filename = self._generate_filename(url)
             local_path = os.path.join(self.output_dir, filename)
@@ -29,11 +30,20 @@ class ImageDownloader:
 
             resp = self.session.get(url, timeout=10, stream=True)
             resp.raise_for_status()
-            with open(local_path, "wb") as f:
+            # Stream to a temp file first, then rename atomically.
+            tmp_path = local_path + ".tmp"
+            with open(tmp_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
+            os.replace(tmp_path, local_path)
             return url, local_path
         except Exception:
+            # Clean up temp file on any failure so it doesn't linger.
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
             return url, None
 
     def download_images(self, urls: list[str]) -> dict[str, str]:

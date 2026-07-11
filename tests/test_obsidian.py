@@ -117,7 +117,7 @@ def test_build_attachment_refs_falls_back_to_outer_page_id() -> None:
 
 def test_refresh_attachments_writes_and_cleans(tmp_path: Path) -> None:
     client = MagicMock()
-    client.download_attachment.side_effect = lambda file_id, page_id: f"data-for-{file_id}".encode()
+    client.download_attachment.side_effect = lambda file_id, page_id, **kw: f"data-for-{file_id}".encode()
 
     attachments_dir = tmp_path / "assets"
     attachments_dir.mkdir()
@@ -141,7 +141,7 @@ def test_refresh_attachments_writes_and_cleans(tmp_path: Path) -> None:
     assert (attachments_dir / "999-new.png").read_bytes() == b"data-for-uuid-new"
     assert not (attachments_dir / "999-old.png").exists()
     assert (attachments_dir / "888-other.png").exists()
-    client.download_attachment.assert_called_once_with(file_id="uuid-new", page_id="999")
+    client.download_attachment.assert_called_once_with(file_id="uuid-new", page_id="999", max_bytes=52428800)
 
 
 def test_resolve_attachments_dir_rel_default(monkeypatch: pytest.MonkeyPatch) -> None:

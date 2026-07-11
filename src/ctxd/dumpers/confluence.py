@@ -33,8 +33,9 @@ class ConfluenceDumper(BaseDumper):
         debug: bool = False,
         obsidian_mode: bool = False,
         obsidian_auto_output: bool = False,
+        **kwargs,
     ):
-        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
+        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.recursive = recursive
         self.include_images = include_images
         self.all_attachments = all_attachments
@@ -56,6 +57,11 @@ class ConfluenceDumper(BaseDumper):
         self.summary.resources_fetched = 1
         with timed("stage.transform"):
             content = self.transform(raw)
+        # P1-5b: sanitize control characters from fetched content.
+        from ctxd.sanitize import sanitize_control_chars
+        content, removed = sanitize_control_chars(content)
+        if removed:
+            self.summary.add_note(f"sanitized {removed} control characters")
         self.summary.resources_rendered = 1
         return content
 
@@ -141,6 +147,12 @@ class ConfluenceDumper(BaseDumper):
         if not self.output:
             with timed("stage.transform"):
                 content = self.transform(raw)
+            from ctxd.dumpers.base import _apply_stdout_limit, _prepend_disclaimer, sanitize_control_chars
+            content, removed = sanitize_control_chars(content)
+            if removed:
+                self.summary.add_note(f"sanitized {removed} control characters")
+            content = _prepend_disclaimer(content, self.fmt)
+            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="stdout")
             self.summary.resources_fetched = 1
             self.summary.resources_rendered = 1
             self.summary.artifacts_written = 1
@@ -156,6 +168,7 @@ class ConfluenceDumper(BaseDumper):
 
         global_attachment_pool: dict[str, str] = {}
         pool_lock = threading.Lock()
+        run_budget = self.run_budget  # shared per-run budget
 
         with timed("stage.export_pages"):
             results = parallel_map(
@@ -164,6 +177,7 @@ class ConfluenceDumper(BaseDumper):
                     output_dir=output_path,
                     global_attachment_pool=global_attachment_pool,
                     pool_lock=pool_lock,
+                    run_budget=run_budget,
                 ),
                 raw["pages"],
             )
@@ -258,10 +272,21 @@ class ConfluenceDumper(BaseDumper):
         if comments_md:
             body += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
-        content = wrap_with_frontmatter(body, "confluence", self.url, title)
+        # P1-5b: sanitize control characters from Obsidian body.
+        from ctxd.sanitize import sanitize_control_chars
+        body, removed = sanitize_control_chars(body)
+        if removed:
+            obsidian_notes.append(f"sanitized {removed} control characters")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(content, encoding="utf-8")
+        from ctxd.dumpers.base import _prepend_disclaimer, _apply_stdout_limit
+        body = _prepend_disclaimer(body, self.fmt)
+        content = wrap_with_frontmatter(body, "confluence", self.url, title)
+        # P1-6: apply --max-chars to Obsidian file output when explicitly set.
+        if self.max_chars > 0:
+            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="file")
+
+        from ctxd.dumpers.base import _atomic_write_text
+        _atomic_write_text(output_path, content)
         self.log(f"✅ Saved to {output_path}")
         self.summary.resources_rendered = 1
         self.summary.artifacts_written = 1
@@ -271,7 +296,9 @@ class ConfluenceDumper(BaseDumper):
         if desired_refs:
             try:
                 count = refresh_attachments(
-                    self.client, page_id, desired_refs, attachments_dir_abs
+                    self.client, page_id, desired_refs, attachments_dir_abs,
+                    max_bytes=self.max_file_size,
+                    run_budget=self.run_budget,
                 )
                 self.log(f"📎 Refreshed {count} attachments in {attachments_dir_abs}")
             except Exception as exc:
@@ -296,6 +323,7 @@ class ConfluenceDumper(BaseDumper):
         output_dir: Path,
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
+        run_budget=None,
     ) -> ExportResult:
         """Export a single page.  Returns an ``ExportResult`` (thread-safe).
 
@@ -327,8 +355,9 @@ class ConfluenceDumper(BaseDumper):
             page_dir.mkdir(parents=True, exist_ok=True)
 
             if self.debug:
+                from ctxd.dumpers.base import _atomic_write_text
                 raw_path = page_dir / "raw.html"
-                raw_path.write_text(html_content, encoding="utf-8")
+                _atomic_write_text(raw_path, html_content)
 
             image_map: dict[str, str] = {}
             if self.include_images:
@@ -340,6 +369,7 @@ class ConfluenceDumper(BaseDumper):
                         global_attachment_pool=global_attachment_pool,
                         pool_lock=pool_lock,
                         notes_out=worker_notes,
+                        run_budget=run_budget,
                     )
 
             base_url = self.client.base_url if self.client else None
@@ -357,11 +387,31 @@ class ConfluenceDumper(BaseDumper):
             if comments_md:
                 markdown += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
-            (page_dir / "README.md").write_text(markdown, encoding="utf-8")
+            # P1-5b: sanitize control characters from page content.
+            from ctxd.sanitize import sanitize_control_chars
+            markdown, removed = sanitize_control_chars(markdown)
+            if removed:
+                worker_notes.append(f"sanitized {removed} control characters")
+
+            # P1-4: prepend data disclaimer to each page file.
+            from ctxd.dumpers.base import _atomic_write_text, _apply_stdout_limit, _prepend_disclaimer
+            from ctxd.summary import Summary as _Summary
+            markdown = _prepend_disclaimer(markdown, self.fmt)
+            # P1-6: apply --max-chars to file output when explicitly set.
+            # Use a thread-local Summary so concurrent workers don't race
+            # on self.summary.  The truncated count is propagated via
+            # ExportResult and aggregated by the main thread.
+            worker_truncated = 0
+            if self.max_chars > 0:
+                worker_summary = _Summary()
+                markdown = _apply_stdout_limit(markdown, self.max_chars, worker_summary, channel="file")
+                worker_truncated = worker_summary.truncated
+                worker_notes.extend(worker_summary.notes)
+            _atomic_write_text(page_dir / "README.md", markdown)
             self.log(f"  ✓ Saved: {page_dir / 'README.md'}")
             return ExportResult(
                 status=PageStatus.WRITTEN, page_id=page_id, title=title,
-                notes=worker_notes,
+                notes=worker_notes, truncated=worker_truncated,
             )
         except Exception as exc:
             self.warn(f"  ✗ Failed to export page {page_id}: {exc}")
@@ -425,6 +475,7 @@ class ConfluenceDumper(BaseDumper):
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
         notes_out: list[str] | None = None,
+        run_budget=None,
     ) -> dict[str, str]:
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
@@ -480,15 +531,22 @@ class ConfluenceDumper(BaseDumper):
             def download_one(target: tuple[str, dict]) -> tuple[str, bool]:
                 filename, attachment = target
                 try:
+                    from ctxd.download_limits import DownloadLimitExceeded
                     content = self.client.download_attachment(
                         file_id=attachment["fileId"],
                         page_id=attachment.get("pageId") or page_id,
+                        max_bytes=self.max_file_size,
                     )
+                    if run_budget is not None:
+                        run_budget.check_and_reserve(len(content))
+                    from ctxd.dumpers.base import _atomic_write_bytes
                     local_path = image_dir / filename
-                    local_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(local_path, "wb") as handle:
-                        handle.write(content)
+                    _atomic_write_bytes(local_path, content)
                     return filename, True
+                except DownloadLimitExceeded as exc:
+                    self.warn(f"    ⚠ {filename}: {exc}")
+                    _note(f"image skipped (size limit): {filename} ({exc})")
+                    return filename, False
                 except Exception as exc:
                     self.warn(f"    ⚠ Failed to download {filename}: {exc}")
                     _note(f"image download failed: {filename} ({exc})")

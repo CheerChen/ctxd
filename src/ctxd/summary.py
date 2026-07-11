@@ -74,6 +74,7 @@ class ExportResult:
     title: str = ""
     reason: str = ""
     notes: list[str] = field(default_factory=list)
+    truncated: int = 0
 
     def to_item(self) -> ItemRecord:
         return ItemRecord(
@@ -141,6 +142,7 @@ class Summary:
         elif result.status is PageStatus.FAILED:
             self.failed += 1
         self.notes.extend(result.notes)
+        self.truncated += result.truncated
 
     @property
     def total(self) -> int:
@@ -181,19 +183,26 @@ class Summary:
         print(self.to_stderr_line(), file=sys.stderr)
 
     def write_manifest(self, path: Path) -> Path:
-        """Write a ``manifest.json`` at *path*.
+        """Write a ``manifest.json`` at *path* atomically.
 
         If *path* is a directory, the file is placed inside as
         ``manifest.json``.  If *path* is a file path, it is used directly
         (e.g. ``output.md.manifest.json``).
         Returns the path to the written manifest.
         """
+        import os
         if path.is_dir():
             manifest_path = path / "manifest.json"
         else:
             manifest_path = path.with_suffix(path.suffix + ".manifest.json")
-        manifest_path.write_text(
-            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+        try:
+            tmp.write_text(
+                json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(tmp, manifest_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
         return manifest_path

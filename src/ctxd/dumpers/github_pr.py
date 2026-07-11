@@ -26,8 +26,9 @@ class GitHubPRDumper(BaseDumper):
         diff_mode: str = "compact",
         clean_body: bool = True,
         no_bots: bool = False,
+        **kwargs,
     ):
-        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose)
+        super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.diff_mode = diff_mode
         self.clean_body = clean_body
         self.no_bots = no_bots

@@ -69,9 +69,12 @@ def test_confluence_obsidian_writes_frontmatter_and_body(tmp_path: Path) -> None
     assert content.startswith("---\n")
     assert "confluence_url: https://example.atlassian.net/wiki/spaces/TEST/pages/12345/Design\n" in content
     assert "confluence_title: Design Doc\n" in content
-    assert "\n---\n\n# Design Doc\n" in content
+    assert "\n---\n" in content  # frontmatter closing
+    assert "# Design Doc\n" in content
     assert "## Metadata" in content
     assert "hello" in content
+    # P1-4: data disclaimer present in body
+    assert "ctxd: this is fetched data" in content
 
 
 def test_confluence_obsidian_auto_output_uses_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,8 +245,11 @@ def test_jira_obsidian_writes_frontmatter_and_body(tmp_path: Path) -> None:
     assert content.startswith("---\n")
     assert "jira_url: https://example.atlassian.net/browse/PROJ-1\n" in content
     assert 'jira_title: "[PROJ-1] Investigate masking"\n' in content
-    assert "\n---\n\n# [PROJ-1] Investigate masking\n" in content
+    assert "\n---\n" in content  # frontmatter closing
+    assert "# [PROJ-1] Investigate masking\n" in content
     assert "Plain text description." in content
+    # P1-4: data disclaimer present in body
+    assert "ctxd: this is fetched data" in content
 
 
 def test_jira_obsidian_auto_output_uses_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
