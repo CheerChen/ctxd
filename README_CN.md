@@ -202,8 +202,10 @@ ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 
 | 参数 | 说明 |
 |------|------|
-| `--download-files` | 下载附件到 `./attachments`，文件名格式为 `IMG_{file_id}.{ext}`（如 `IMG_F0AAAAAAA1.png`）；要求 Slack token 含 `files:read` scope |
+| `--download-files` | 下载附件到输出文件旁的 `attachments/`，文件名格式为 `IMG_{file_id}.{ext}`（如 `IMG_F0AAAAAAA1.png`）；需要 `-o`/`-O`，且 Slack token 含 `files:read` scope |
 | `--raw` | 保留原始 Slack mrkdwn 标记 |
+
+每条附件行都保留 Slack permalink（供人在浏览器打开）；文件下载成功时追加 `— saved: attachments/IMG_<id>.<ext>`，这样从导出产物就能找到本地副本。运行摘要会报告下载了几个文件，或未使用该 flag 时跳过了几个。
 
 ---
 

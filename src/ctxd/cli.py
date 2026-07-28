@@ -30,7 +30,8 @@ from ctxd.router import Source, detect
 @click.option("--clean-body/--no-clean-body", default=True, show_default=True)
 @click.option("--no-bots", is_flag=True, default=False,
               help="GitHub PR: drop bot-authored reviews/comments (default: keep all bots)")
-@click.option("--download-files", is_flag=True, default=False)
+@click.option("--download-files", is_flag=True, default=False,
+              help="Slack: download thread attachments (requires -o or -O)")
 @click.option("--raw", is_flag=True, default=False, help="Keep original Slack mrkdwn")
 @click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
               help="Confluence: also export child pages (requires -o or -O)")
@@ -207,6 +208,9 @@ def main(
             max_run_size=resolved_max_run_size,
         )
     else:
+        _validate_slack_flags(
+            url=url, output=output, auto_output=auto_output, download_files=download_files,
+        )
         dumper = SlackDumper(
             url=url,
             output=output_str,
@@ -342,6 +346,23 @@ def _validate_obsidian_flags(
         )
     if fmt != "md":
         raise click.UsageError("--obsidian requires markdown format (incompatible with -f text)")
+
+
+def _validate_slack_flags(
+    url: str,
+    output: Path | None,
+    auto_output: bool,
+    download_files: bool,
+) -> None:
+    if not download_files or output is not None or auto_output:
+        return
+
+    raise click.UsageError(
+        "--download-files requires -o <file> or -O (attachments are written to disk "
+        "next to the output; without one they would land in the current directory).\n"
+        f"Try:   ctxd {url} --download-files -O\n"
+        f"Or:    ctxd {url} --download-files -o thread.md"
+    )
 
 
 def _validate_jira_flags(

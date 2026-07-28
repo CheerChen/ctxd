@@ -41,6 +41,10 @@ class SlackDumper(BaseDumper):
         # cache per-instance so a chatty thread doesn't hit the API N times per user.
         self._user_cache: dict[str, dict] = {}
         self._channel_name_cache: dict[str, str] = {}
+        # Attachment tallies, reported once at the end of transform.
+        self._files_seen = 0
+        self._files_downloaded = 0
+        self._download_dir: Path | None = None
 
     def default_filename(self) -> str:
         channel_id, thread_ts = parse_slack_thread_url(self.url)
@@ -126,6 +130,8 @@ class SlackDumper(BaseDumper):
 
         attachment_base_dir = Path(self.output).parent if self.output else Path.cwd()
 
+        self._files_seen = 0
+        self._files_downloaded = 0
         for msg in messages:
             lines.extend(
                 self._format_message(
@@ -136,7 +142,25 @@ class SlackDumper(BaseDumper):
                 )
             )
 
+        self._report_file_stats()
         return "\n".join(lines).strip() + "\n"
+
+    def _report_file_stats(self) -> None:
+        """One summary line for the whole thread — never silent about files
+        the export left behind, never noisy per message."""
+        if not self._files_seen:
+            return
+        if not self.download_files:
+            self.summary.add_note(
+                f"{self._files_seen} file(s) not downloaded (use --download-files)"
+            )
+            return
+        if self._files_downloaded:
+            self.log(f"📎 Downloaded {self._files_downloaded} file(s) to {self._download_dir}")
+            self.summary.add_note(
+                f"{self._files_downloaded}/{self._files_seen} file(s) downloaded "
+                f"to {self._download_dir}"
+            )
 
     def _api_call(self, method: str, params: dict[str, str]) -> dict:
         url = f"https://slack.com/api/{method}"
@@ -269,37 +293,40 @@ class SlackDumper(BaseDumper):
             lines.append(processed)
 
         if files:
-            if markdown:
-                lines.append("")
-                lines.append("**Attachments:**")
-                for file in files:
-                    name = file.get("name", "attachment")
-                    mimetype = file.get("mimetype", "unknown")
-                    permalink = file.get("permalink") or file.get("url_private") or "n/a"
-                    lines.append(f"- 📎 [{name}] ({mimetype}) - {permalink}")
-            else:
-                lines.append("")
-                lines.append("Attachments:")
-                for file in files:
-                    name = file.get("name", "attachment")
-                    mimetype = file.get("mimetype", "unknown")
-                    permalink = file.get("permalink") or file.get("url_private") or "n/a"
-                    lines.append(f"  📎 [{name}] ({mimetype}) - {permalink}")
-
+            # Download first: the saved path is appended to each attachment
+            # line, so a reader of the artifact can find the local copy.
+            self._files_seen += len(files)
+            local_paths: dict[str, str] = {}
             if self.download_files:
-                self._download_files(files, attachment_base_dir)
+                local_paths = self._download_files(files, attachment_base_dir)
+
+            bullet = "- 📎" if markdown else "  📎"
+            lines.append("")
+            lines.append("**Attachments:**" if markdown else "Attachments:")
+            for file in files:
+                name = file.get("name", "attachment")
+                mimetype = file.get("mimetype", "unknown")
+                permalink = file.get("permalink") or file.get("url_private") or "n/a"
+                line = f"{bullet} [{name}] ({mimetype}) - {permalink}"
+                local = local_paths.get(file.get("id", ""))
+                if local:
+                    line += f" — saved: {local}"
+                lines.append(line)
 
         lines.append("")
         lines.append("---")
         lines.append("")
         return lines
 
-    def _download_files(self, files: list[dict], attachment_base_dir: Path) -> None:
+    def _download_files(self, files: list[dict], attachment_base_dir: Path) -> dict[str, str]:
+        """Download *files* and return ``{file_id: path relative to the output}``."""
         from ctxd.download_limits import DownloadLimitExceeded
         from ctxd.dumpers.base import _atomic_write_bytes
 
         attachment_dir = attachment_base_dir / "attachments"
         attachment_dir.mkdir(parents=True, exist_ok=True)
+        self._download_dir = attachment_dir
+        local_paths: dict[str, str] = {}
 
         for file in files:
             # url_private_download is the canonical binary endpoint; fall back
@@ -365,6 +392,8 @@ class SlackDumper(BaseDumper):
                 self.run_budget.check_and_reserve(len(content))
                 _atomic_write_bytes(target, content)
                 self.log(f"  📥 Downloaded: {target.name}")
+                local_paths[file_id] = f"attachments/{target.name}"
+                self._files_downloaded += 1
             except DownloadLimitExceeded as exc:
                 self.warn(f"  ⚠ Skipping {name}: {exc}")
                 self.summary.skipped += 1
@@ -373,6 +402,8 @@ class SlackDumper(BaseDumper):
                 self.warn(f"  ⚠ Failed to download {name}: {exc}")
                 self.summary.failed += 1
                 self.summary.add_note(f"download failed: {name} ({exc})")
+
+        return local_paths
 
     @staticmethod
     def _format_ts(ts: str) -> str:

@@ -195,8 +195,10 @@ When you copy a link to a specific reply (archive URL with `?thread_ts=` where t
 
 | Option | Description |
 |--------|-------------|
-| `--download-files` | Download attachments to `./attachments` as `IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`); requires `files:read` scope on the Slack token |
+| `--download-files` | Download attachments next to the output as `attachments/IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`); requires `-o`/`-O` and the `files:read` scope on the Slack token |
 | `--raw` | Keep original Slack mrkdwn markup |
+
+Each attachment line keeps the Slack permalink (the address a human opens) and, when the file was downloaded, appends `— saved: attachments/IMG_<id>.<ext>` so the local copy is discoverable from the export. The run summary reports how many files were downloaded, or how many were left behind when the flag is not used.
 
 ---
 
