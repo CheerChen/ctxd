@@ -66,6 +66,17 @@ Confluence page tree:
 ctxd '<confluence-url>' -f text -r -O
 ```
 
+Jira issue with its attachments (images, diagrams, PDFs) saved locally and the
+body links rewritten to point at them:
+
+```bash
+ctxd '<jira-url>' --all-attachments -O
+```
+
+Attachments are never downloaded by default. When an issue or page has
+attachments that were skipped, the run summary says so — read it before
+concluding that content is missing.
+
 Profile a slow export:
 
 ```bash

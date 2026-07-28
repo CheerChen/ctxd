@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.6]
+
+### Added
+* **Jira attachments** (`-i`, `--all-attachments`) : the two flags previously only affected Confluence, so a Jira issue whose description embedded a diagram exported as a bare remote URL and the image had to be fetched by hand with `curl`. `ctxd` now reads `fields.attachment` (no extra API call — the metadata ships with the issue), downloads the selected files through the attachment content endpoint (Basic auth works directly; unlike Confluence no media token is needed), and rewrites every attachment URL in the description, comments and custom fields to the local relative path. Files land in `<output-stem>_attachments/` — or the vault assets directory under `--obsidian` — named `<attachment-id>-<filename>` so same-named uploads cannot overwrite each other. `-i` takes only images referenced from the body; `--all-attachments` takes everything. Both require `-o`/`-O` and enforce the existing `--max-file-size` / `--max-run-size` budgets; failed downloads warn, count as `failed`, and keep the original remote URL.
+* **Jira `Attachments` section** : every issue export lists each attachment with filename, MIME type and size, whether or not it was downloaded. When attachments exist and no download flag was passed, the run summary states how many were skipped and which flag to use, so the omission is never silent.
+
+### Fixed
+* **`-o <existing directory>` crashed for single-file sources** : `ctxd <jira-url> -o ./somedir` failed with `[Errno 21] Is a directory` from the atomic-write rename, despite `-o` being documented as "Output file or directory". An existing directory now gets the source's default filename appended (`./somedir/jira-KEY.md`). Confluence directory export is unaffected — a directory is its natural output.
+
 ## [0.4.5]
 
 ### Added

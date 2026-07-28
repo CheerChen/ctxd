@@ -260,7 +260,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
 ## Jira
 
-Export full Jira issue content (description, comments, custom fields).
+Export full Jira issue content (description, comments, custom fields, attachments).
 
 ### Prerequisites
 
@@ -271,9 +271,28 @@ Shares authentication with Confluence (see above), so the same config applies. J
 ```bash
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
+
+# Download every attachment next to the output file
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
+
+# Only the images the issue body actually references
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
 
 Rich-text custom fields are exported as Markdown. Serializable plain fields (strings, numbers, booleans, simple lists/dicts) are exported too. Unsupported nested objects are omitted with a stderr warning and a note in the run summary — never dropped silently.
+
+### Attachments
+
+Every issue export ends with an `Attachments` section listing filename, MIME type and size, so nothing is invisible even when no file is downloaded. Attachments are only written to disk when `-i` or `--all-attachments` is passed:
+
+| Option | Description |
+|--------|-------------|
+| `-i, --include-images` | Download images referenced from the issue body (default: off) |
+| `--all-attachments` | Download every attachment on the issue (default: off) |
+
+Downloaded files go to `<output-stem>_attachments/` (or the Obsidian assets directory under `--obsidian`), named `<attachment-id>-<filename>` so same-named uploads never overwrite each other. Attachment URLs in the description, comments and custom fields are rewritten to the local relative paths; anything that failed to download keeps its original remote URL.
+
+> **Note**: `-i` / `--all-attachments` require `-o <file>` or `-O`. When an issue has attachments and neither flag is set, the run summary says how many were skipped and which flag to use.
 
 ---
 

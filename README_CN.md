@@ -267,7 +267,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
 ## Jira
 
-导出 Jira Issue 的完整内容（描述、评论、自定义字段）。
+导出 Jira Issue 的完整内容（描述、评论、自定义字段、附件）。
 
 ### 前置条件
 
@@ -278,9 +278,28 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ```bash
 ctxd https://your-site.atlassian.net/browse/PROJECT-123
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
+
+# 下载全部附件到输出文件旁边
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
+
+# 只下载正文引用到的图片
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
 
 富文本自定义字段会导出为 Markdown；可序列化的普通字段（字符串、数字、布尔、简单列表/字典）也会导出。无法序列化的嵌套对象会省略，并在 stderr 告警、写入运行摘要 notes——不会静默丢弃。
+
+### 附件
+
+每次 Issue 导出末尾都会有一个 `Attachments` 段落，列出文件名、MIME 类型与体积——即使一个文件都没下载，附件的存在也不会被隐藏。只有传 `-i` 或 `--all-attachments` 才会真正落盘：
+
+| 选项 | 说明 |
+|------|------|
+| `-i, --include-images` | 下载正文引用的图片（默认关闭） |
+| `--all-attachments` | 下载 Issue 上的全部附件（默认关闭） |
+
+下载目录为 `<输出文件名>_attachments/`（`--obsidian` 模式下为 vault 的 assets 目录），文件名为 `<附件 id>-<原文件名>`，同名上传不会互相覆盖。描述、评论、自定义字段中的附件 URL 会被改写为本地相对路径；下载失败的条目保留原始远程 URL。
+
+> **注意**：`-i` / `--all-attachments` 需要配合 `-o <文件>` 或 `-O`。当 Issue 有附件而两个 flag 都没传时，运行摘要会说明跳过了几个附件、该用哪个 flag。
 
 ---
 

@@ -8,8 +8,17 @@ from pathlib import Path
 import markdownify
 
 from ctxd.auth import ensure_jira_auth
+from ctxd.concurrency import parallel_map
 from ctxd.dumpers.base import BaseDumper
 from ctxd.jira.api_client import JiraClient
+from ctxd.jira.attachments import (
+    JiraAttachment,
+    format_size,
+    parse_attachments,
+    referenced_ids,
+    rewrite_attachment_links,
+    select_attachments,
+)
 from ctxd.jira.converter import preprocess_jira_html
 from ctxd.jira.url_parser import parse_jira_url
 from ctxd.summary import Summary
@@ -23,6 +32,8 @@ class JiraDumper(BaseDumper):
         fmt: str,
         quiet: bool = False,
         verbose: bool = False,
+        include_images: bool = False,
+        all_attachments: bool = False,
         debug: bool = False,
         obsidian_mode: bool = False,
         obsidian_auto_output: bool = False,
@@ -31,16 +42,26 @@ class JiraDumper(BaseDumper):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.client: JiraClient | None = None
         self.issue_key: str = ""
+        self.include_images = include_images
+        self.all_attachments = all_attachments
         self.debug = debug
         self.obsidian_mode = obsidian_mode
         self.obsidian_auto_output = obsidian_auto_output
+        # Set by the Obsidian dump path so attachments land in the vault's
+        # assets directory instead of next to the note.
+        self._obsidian_attachment_target: tuple[Path, str] | None = None
 
     def dump(self) -> None:
         if not self.obsidian_mode:
             super().dump()
             return
 
-        from ctxd.obsidian import sanitize_note_stem, wrap_with_frontmatter
+        from ctxd.obsidian import (
+            resolve_attachments_base_dir,
+            resolve_attachments_dir_rel,
+            sanitize_note_stem,
+            wrap_with_frontmatter,
+        )
 
         self.summary = Summary(source="jira")
         self.validate_auth()
@@ -54,6 +75,13 @@ class JiraDumper(BaseDumper):
         else:
             stem = sanitize_note_stem(title, fallback=f"jira-{key}")
             output_path = Path.cwd() / f"{stem}.md"
+
+        attachments_dir_rel = resolve_attachments_dir_rel()
+        if attachments_dir_rel.is_absolute():
+            attachments_dir_abs = attachments_dir_rel
+        else:
+            attachments_dir_abs = resolve_attachments_base_dir(output_path) / attachments_dir_rel
+        self._obsidian_attachment_target = (attachments_dir_abs, attachments_dir_rel.as_posix())
 
         body = self.transform(raw)
         from ctxd.dumpers.base import _apply_stdout_limit
@@ -157,8 +185,11 @@ class JiraDumper(BaseDumper):
         # Linked issues
         issue_links = fields.get("issuelinks") or []
 
+        attachments = parse_attachments(fields)
+        local_paths = self._download_attachments(attachments, rendered, custom_fields)
+
         if self.fmt == "md":
-            return self._format_markdown(
+            content = self._format_markdown(
                 key=key,
                 summary=summary,
                 status=status,
@@ -177,9 +208,12 @@ class JiraDumper(BaseDumper):
                 issue_links=issue_links,
                 comments=comments,
                 rendered_comments=rendered,
+                attachments=attachments,
+                attachment_paths=local_paths,
             )
+            return rewrite_attachment_links(content, local_paths)
 
-        return self._format_text(
+        content = self._format_text(
             key=key,
             summary=summary,
             status=status,
@@ -198,7 +232,10 @@ class JiraDumper(BaseDumper):
             issue_links=issue_links,
             comments=comments,
             rendered_comments=rendered,
+            attachments=attachments,
+            attachment_paths=local_paths,
         )
+        return rewrite_attachment_links(content, local_paths)
 
     def _format_markdown(
         self,
@@ -221,6 +258,8 @@ class JiraDumper(BaseDumper):
         issue_links: list[dict],
         comments: list[dict],
         rendered_comments: dict,
+        attachments: list[JiraAttachment] | None = None,
+        attachment_paths: dict[str, str] | None = None,
     ) -> str:
         lines = [
             f"# [{key}] {summary}",
@@ -275,6 +314,15 @@ class JiraDumper(BaseDumper):
                     lines.append(f"- {link_type} **{t_key}**: {t_summary} [{t_status}]")
             lines.append("")
 
+        if attachments:
+            lines.append("## Attachments")
+            lines.append("")
+            for att in attachments:
+                target = (attachment_paths or {}).get(att.id) or att.content_url
+                meta = f"{att.mime_type or 'unknown'}, {format_size(att.size)}"
+                lines.append(f"- [{att.filename}]({target}) — {meta}")
+            lines.append("")
+
         if comments:
             lines.append("## Comments")
             lines.append("")
@@ -320,6 +368,8 @@ class JiraDumper(BaseDumper):
         issue_links: list[dict],
         comments: list[dict],
         rendered_comments: dict,
+        attachments: list[JiraAttachment] | None = None,
+        attachment_paths: dict[str, str] | None = None,
     ) -> str:
         lines = [
             "################################################################################",
@@ -369,6 +419,14 @@ class JiraDumper(BaseDumper):
                     lines.append(f"  {link_type} {t_key}: {t_summary} [{t_status}]")
             lines.append("")
 
+        if attachments:
+            lines.append("--- ATTACHMENTS ---")
+            for att in attachments:
+                target = (attachment_paths or {}).get(att.id) or att.content_url
+                meta = f"{att.mime_type or 'unknown'}, {format_size(att.size)}"
+                lines.append(f"  {att.filename} ({meta}): {target}")
+            lines.append("")
+
         if comments:
             lines.append("--- COMMENTS ---")
             lines.append("")
@@ -391,6 +449,97 @@ class JiraDumper(BaseDumper):
                 lines.append("")
 
         return "\n".join(lines)
+
+    def _attachment_target(self) -> tuple[Path, str] | None:
+        """Return ``(absolute_dir, relative_prefix)`` for downloaded files.
+
+        Obsidian mode writes into the vault's assets directory; normal file
+        output gets a sibling ``<stem>_attachments/`` directory.  Returns
+        None when the output is stdout (nothing to be relative to).
+        """
+        if self._obsidian_attachment_target is not None:
+            return self._obsidian_attachment_target
+        if not self.output:
+            return None
+        out = Path(self.output)
+        directory = out.parent / f"{out.stem}_attachments"
+        return directory, directory.name
+
+    def _download_attachments(
+        self, attachments: list[JiraAttachment], rendered: dict, custom_fields: list[dict]
+    ) -> dict[str, str]:
+        """Download the selected attachments and return ``{id: rel_path}``."""
+        if not attachments:
+            return {}
+
+        rendered_comments = rendered.get("comment", {}).get("comments", [])
+        referenced = referenced_ids(
+            rendered.get("description", ""),
+            *(c.get("content", "") for c in custom_fields),
+            *(c.get("renderedBody", "") for c in rendered_comments),
+        )
+        selected = select_attachments(
+            attachments, referenced, self.include_images, self.all_attachments
+        )
+
+        if not selected:
+            # Never silent: the issue has attachments the output does not
+            # include, so say how to get them.
+            if self.include_images or self.all_attachments:
+                self.summary.add_note(
+                    f"{len(attachments)} attachment(s) present, none matched the download filter"
+                )
+            else:
+                self.summary.add_note(
+                    f"{len(attachments)} attachment(s) not downloaded "
+                    f"(use --all-attachments, or -i for referenced images, with -o/-O)"
+                )
+            return {}
+
+        target = self._attachment_target()
+        if target is None:
+            self.warn("⚠ Attachment download needs -o <file> or -O; skipping")
+            self.summary.add_note("attachments skipped: no output path")
+            return {}
+
+        if self.client is None:
+            raise RuntimeError("Jira client not initialized")
+
+        attachments_dir, rel_prefix = target
+        attachments_dir.mkdir(parents=True, exist_ok=True)
+
+        from ctxd.dumpers.base import _atomic_write_bytes
+
+        client = self.client
+
+        def download_one(att: JiraAttachment) -> tuple[JiraAttachment, str | None]:
+            """Runs in a worker thread — returns the error instead of touching
+            ``self.summary``, which the main thread aggregates below."""
+            try:
+                content = client.download_attachment(
+                    att.id, content_url=att.content_url, max_bytes=self.max_file_size
+                )
+                self.run_budget.check_and_reserve(len(content))
+                _atomic_write_bytes(attachments_dir / att.target_name(), content)
+            except Exception as exc:
+                return att, str(exc)
+            return att, None
+
+        local_paths: dict[str, str] = {}
+        for att, error in parallel_map(download_one, selected):
+            if error is not None:
+                self.warn(f"  ⚠ Failed to download attachment {att.filename}: {error}")
+                self.summary.failed += 1
+                self.summary.add_note(f"attachment download failed: {att.filename} — {error}")
+                continue
+            local_paths[att.id] = f"{rel_prefix}/{att.target_name()}"
+
+        if local_paths:
+            self.log(f"📎 Downloaded {len(local_paths)} attachment(s) to {attachments_dir}")
+            self.summary.add_note(
+                f"{len(local_paths)} attachment(s) downloaded to {attachments_dir}"
+            )
+        return local_paths
 
     def _save_debug_html(self, issue: dict, comments: list[dict]) -> None:
         """Save raw API responses for debugging conversion issues."""

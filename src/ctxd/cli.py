@@ -35,8 +35,9 @@ from ctxd.router import Source, detect
 @click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
               help="Confluence: also export child pages (requires -o or -O)")
 @click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
-              help="Confluence: download referenced images (requires -o or -O)")
-@click.option("--all-attachments", is_flag=True, default=False)
+              help="Confluence/Jira: download referenced images (requires -o or -O)")
+@click.option("--all-attachments", is_flag=True, default=False,
+              help="Confluence/Jira: download every attachment (requires -o or -O)")
 @click.option("--obsidian", is_flag=True, default=False,
               help="Confluence/Jira: write an Obsidian note (frontmatter + body); requires -o or -O")
 @click.option("--debug", is_flag=True, default=False)
@@ -183,12 +184,21 @@ def main(
             max_run_size=resolved_max_run_size,
         )
     elif source is Source.JIRA:
+        _validate_jira_flags(
+            url=url,
+            output=output,
+            auto_output=auto_output,
+            include_images=include_images,
+            all_attachments=all_attachments,
+        )
         dumper = JiraDumper(
             url=url,
             output=output_str,
             fmt=fmt,
             quiet=quiet,
             verbose=verbose,
+            include_images=include_images,
+            all_attachments=all_attachments,
             debug=debug,
             obsidian_mode=obsidian,
             obsidian_auto_output=auto_output and obsidian,
@@ -225,9 +235,20 @@ def main(
             )
         use_recurse = False
 
+    # Confluence directory export is the only mode where the output path is
+    # itself a directory.  Everywhere else -o accepts "file or directory":
+    # an existing directory gets the default filename appended, instead of
+    # failing at rename time with "Is a directory".
+    writes_directory = source is Source.CONFLUENCE and not obsidian
+
     resolved_output: Path | None = output
     if auto_output and not obsidian:
         resolved_output = Path(dumper.default_filename())
+    elif resolved_output is not None and not writes_directory and resolved_output.is_dir():
+        name = dumper.default_filename()
+        if obsidian and not Path(name).suffix:
+            name = f"{name}.md"
+        resolved_output = resolved_output / name
 
     if use_recurse:
         # render_with_recurse collects content as a string; we handle the
@@ -321,6 +342,32 @@ def _validate_obsidian_flags(
         )
     if fmt != "md":
         raise click.UsageError("--obsidian requires markdown format (incompatible with -f text)")
+
+
+def _validate_jira_flags(
+    url: str,
+    output: Path | None,
+    auto_output: bool,
+    include_images: bool,
+    all_attachments: bool,
+) -> None:
+    if output is not None or auto_output:
+        return
+
+    used: list[str] = []
+    if include_images:
+        used.append("-i")
+    if all_attachments:
+        used.append("--all-attachments")
+    if not used:
+        return
+
+    flags = " ".join(used)
+    raise click.UsageError(
+        f"{flags} requires -o <file> or -O (attachments are written to disk next to the output).\n"
+        f"Try:   ctxd {url} {flags} -O\n"
+        f"Or:    ctxd {url} {flags} -o issue.md"
+    )
 
 
 def _validate_confluence_flags(
