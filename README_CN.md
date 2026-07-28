@@ -57,8 +57,8 @@ ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 # Confluence 页面树 + 图片 -> 导出到本地目录
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
-# Jira issue -> Obsidian-ready note
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
+# Jira issue + 引用的图片 -> 本地文件
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
 ## 支持的数据源
 
@@ -301,7 +301,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 | `-i, --include-images` | 下载正文引用的图片（默认关闭） |
 | `--all-attachments` | 下载 Issue 上的全部附件（默认关闭） |
 
-下载目录为 `<输出文件名>_attachments/`（`--obsidian` 模式下为 vault 的 assets 目录），文件名为 `<附件 id>-<原文件名>`，同名上传不会互相覆盖。描述、评论、自定义字段中的附件 URL 会被改写为本地相对路径；下载失败的条目保留原始远程 URL。
+下载目录为 `<输出文件名>_attachments/`，文件名为 `<附件 id>-<原文件名>`，同名上传不会互相覆盖。描述、评论、自定义字段中的附件 URL 会被改写为本地相对路径；下载失败的条目保留原始远程 URL。
 
 > **注意**：`-i` / `--all-attachments` 需要配合 `-o <文件>` 或 `-O`。当 Issue 有附件而两个 flag 都没传时，运行摘要会说明跳过了几个附件、该用哪个 flag。
 

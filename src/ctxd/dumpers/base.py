@@ -81,8 +81,8 @@ class BaseDumper(ABC):
     def dump(self) -> None:
         """Default dump: render → write file or stdout → emit summary.
 
-        Subclasses that need custom export logic (Confluence directory,
-        Obsidian) override this.  Overrides are responsible for:
+        Subclasses that need custom export logic (Confluence directory)
+        override this.  Overrides are responsible for:
         - resetting ``self.summary`` at the start
         - populating summary counts
         - calling ``self._emit_and_manifest()`` at the end
@@ -108,9 +108,7 @@ class BaseDumper(ABC):
         """Emit the summary to stderr and write a manifest if output is a file.
 
         *manifest_path* overrides the default manifest location.  When None
-        (default), the manifest is derived from ``self.output``.  This is
-        used by Obsidian mode where the output path is resolved locally
-        but ``self.output`` may still be None (auto-naming with ``-O``).
+        (default), the manifest is derived from ``self.output``.
         """
         self.summary.emit()
         out_path = manifest_path

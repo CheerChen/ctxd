@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.0]
+
+### Removed
+* **`--obsidian` mode** : it was a vault-sync feature (frontmatter, `.obsidian/` vault discovery, `ATTACHMENTS_DIR` assets refresh with stale-file deletion) living inside a context dumper whose consumers are LLMs and agents. The two goals never shared a pipeline — Obsidian mode maintained its own dump path in both the Confluence and Jira dumpers and leaked mode checks into almost every branch of the CLI (recursion guards, output-path resolution, flag validation). Removing it deletes the `ctxd.obsidian` module, both per-dumper Obsidian pipelines, the `ATTACHMENTS_DIR` config key, and every `--obsidian` branch in the CLI. Writing into a vault still works — `ctxd <url> -o note.md` produces markdown Obsidian renders fine; what is gone is frontmatter injection and vault-level asset management. If that returns, it returns as a separate tool.
+
 ## [0.4.6]
 
 ### Added

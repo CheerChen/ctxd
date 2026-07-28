@@ -31,8 +31,6 @@ class ConfluenceDumper(BaseDumper):
         include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
-        obsidian_mode: bool = False,
-        obsidian_auto_output: bool = False,
         **kwargs,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
@@ -40,8 +38,6 @@ class ConfluenceDumper(BaseDumper):
         self.include_images = include_images
         self.all_attachments = all_attachments
         self.debug = debug
-        self.obsidian_mode = obsidian_mode
-        self.obsidian_auto_output = obsidian_auto_output
         self.client: ConfluenceClient | None = None
 
     def validate_auth(self) -> None:
@@ -135,10 +131,6 @@ class ConfluenceDumper(BaseDumper):
         return result
 
     def dump(self) -> None:
-        if self.obsidian_mode:
-            self._dump_obsidian()
-            return
-
         self.summary = Summary(source="confluence")
         self.validate_auth()
         self._resolve_short_link()
@@ -194,116 +186,6 @@ class ConfluenceDumper(BaseDumper):
         self.log(f"📁 Output: {output_path}")
 
         self._emit_and_manifest()
-
-    def _dump_obsidian(self) -> None:
-        self.summary = Summary(source="confluence")
-        from ctxd.obsidian import (
-            build_attachment_refs,
-            refresh_attachments,
-            resolve_attachments_base_dir,
-            resolve_attachments_dir_rel,
-            sanitize_note_stem,
-            wrap_with_frontmatter,
-        )
-
-        self.validate_auth()
-        self._resolve_short_link()
-        if self.client is None:
-            raise RuntimeError("Confluence client not initialized")
-
-        _, page_id = parse_confluence_url(self.url)
-        page = self.client.get_page(page_id)
-        title = str(page.get("title", "Untitled"))
-        self.summary.resources_fetched = 1
-
-        if self.output:
-            output_path = Path(self.output)
-        else:
-            stem = sanitize_note_stem(title, fallback=f"confluence-{page_id}")
-            output_path = Path.cwd() / f"{stem}.md"
-
-        attachments_dir_rel = resolve_attachments_dir_rel()
-        if attachments_dir_rel.is_absolute():
-            attachments_dir_abs = attachments_dir_rel
-        else:
-            base = resolve_attachments_base_dir(output_path)
-            attachments_dir_abs = base / attachments_dir_rel
-
-        html_content = page.get("body", {}).get("storage", {}).get("value") or ""
-
-        obsidian_notes: list[str] = []
-
-        try:
-            attachments_meta = self.client.get_attachments(page_id)
-        except Exception as exc:
-            self.warn(f"⚠ Failed to fetch attachments for {page_id}: {exc}")
-            self.summary.failed += 1
-            obsidian_notes.append(f"attachments fetch failed: {exc}")
-            attachments_meta = []
-
-        refs = build_attachment_refs(page_id, attachments_meta, attachments_dir_rel)
-        referenced_images = set(extract_confluence_images(html_content))
-
-        if self.all_attachments:
-            download_names = set(refs.keys())
-        else:
-            download_names = referenced_images & set(refs.keys())
-
-        image_map: dict[str, str] = {
-            name: refs[name].target_rel_path
-            for name in referenced_images
-            if name in refs
-        }
-
-        metadata_block = self._build_metadata_block(page, notes_out=obsidian_notes)
-        fallback_urls = self._image_fallback_urls(
-            page_id, html_content, image_map=image_map,
-            notes_out=obsidian_notes, attachments=attachments_meta,
-        )
-        markdown, _, marker_line_map = html_to_markdown(
-            html_content, image_map=image_map, base_url=self.client.base_url,
-            fallback_urls=fallback_urls,
-        )
-        offset = 2 + metadata_block.count("\n")
-        marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
-        body = f"# {title}\n\n{metadata_block}{markdown}"
-
-        comments_md = self._fetch_and_format_comments(
-            page_id, marker_line_map=marker_line_map, notes_out=obsidian_notes,
-        )
-        if comments_md:
-            body += f"\n\n---\n\n## Comments\n\n{comments_md}"
-
-        from ctxd.dumpers.base import _apply_stdout_limit
-        content = wrap_with_frontmatter(body, "confluence", self.url, title)
-        # P1-6: apply --max-chars to Obsidian file output when explicitly set.
-        if self.max_chars > 0:
-            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="file")
-
-        from ctxd.dumpers.base import _atomic_write_text
-        _atomic_write_text(output_path, content)
-        self.log(f"✅ Saved to {output_path}")
-        self.summary.resources_rendered = 1
-        self.summary.artifacts_written = 1
-        self.summary.notes.extend(obsidian_notes)
-
-        desired_refs = [refs[name] for name in sorted(download_names)]
-        if desired_refs:
-            try:
-                count = refresh_attachments(
-                    self.client, page_id, desired_refs, attachments_dir_abs,
-                    max_bytes=self.max_file_size,
-                    run_budget=self.run_budget,
-                )
-                self.log(f"📎 Refreshed {count} attachments in {attachments_dir_abs}")
-            except Exception as exc:
-                self.warn(f"⚠ Attachment refresh failed: {exc}")
-                self.summary.failed += 1
-                self.summary.add_note(f"attachment refresh failed: {exc}")
-
-        # Pass output_path explicitly so manifest is written even when
-        # self.output is None (auto-naming with -O).
-        self._emit_and_manifest(manifest_path=output_path)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:

@@ -439,8 +439,7 @@ class TestMaxCharsHardCap:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: --max-chars applies to Confluence directory, Confluence Obsidian,
-# and Jira Obsidian file outputs.
+# Test 9: --max-chars applies to Confluence directory file outputs.
 # ---------------------------------------------------------------------------
 
 class TestMaxCharsAllFilePaths:
@@ -476,67 +475,6 @@ class TestMaxCharsAllFilePaths:
         page_file = tmp_path / "export" / "123_Root" / "README.md"
         content = page_file.read_text()
         assert len(content) <= 300, f"Page file {len(content)} exceeds max_chars 300"
-        assert "truncated" in content
-
-    def test_confluence_obsidian_truncated(self, tmp_path: Path, monkeypatch) -> None:
-        """Confluence Obsidian export with --max-chars: note file truncated."""
-        from ctxd.dumpers.confluence import ConfluenceDumper
-
-        d = ConfluenceDumper(
-            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/Title",
-            output=str(tmp_path / "note.md"), fmt="md",
-            max_chars=300,
-        )
-        d.obsidian_mode = True
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
-        d.client = MagicMock()
-        d.client.base_url = "https://test.atlassian.net"
-        long_html = "<p>" + "B" * 500 + "</p>"
-        d.client.get_page = MagicMock(return_value={
-            "id": "123", "title": "Test",
-            "body": {"storage": {"value": long_html}},
-        })
-        d.client.get_inline_comments = MagicMock(return_value=[])
-        d.client.get_footer_comments = MagicMock(return_value=[])
-        d.client.get_space_name = MagicMock(return_value="S")
-        d.client.get_user_display_name = MagicMock(return_value="A")
-        d.client.get_attachments = MagicMock(return_value=[])
-
-        d.dump()
-
-        content = (tmp_path / "note.md").read_text()
-        assert len(content) <= 300, f"Obsidian note {len(content)} exceeds max_chars 300"
-        assert "truncated" in content
-
-    def test_jira_obsidian_truncated(self, tmp_path: Path, monkeypatch) -> None:
-        """Jira Obsidian export with --max-chars: note file truncated."""
-        from ctxd.dumpers.jira import JiraDumper
-
-        d = JiraDumper(
-            url="https://test.atlassian.net/browse/TEST-1",
-            output=str(tmp_path / "note.md"), fmt="md",
-            obsidian_mode=True, max_chars=300,
-        )
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        d.client = MagicMock()
-        long_desc = "C" * 500
-        d.client.get_issue = MagicMock(return_value={
-            "key": "TEST-1",
-            "fields": {
-                "summary": "Test",
-                "status": {"name": "Open"},
-                "description": long_desc,
-            },
-            "renderedFields": {"description": f"<p>{long_desc}</p>"},
-            "names": {},
-        })
-        d.client.get_comments = MagicMock(return_value=[])
-
-        d.dump()
-
-        content = (tmp_path / "note.md").read_text()
-        assert len(content) <= 300, f"Jira note {len(content)} exceeds max_chars 300"
         assert "truncated" in content
 
 

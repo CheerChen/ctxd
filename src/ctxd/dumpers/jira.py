@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import markdownify
@@ -21,7 +20,6 @@ from ctxd.jira.attachments import (
 )
 from ctxd.jira.converter import preprocess_jira_html
 from ctxd.jira.url_parser import parse_jira_url
-from ctxd.summary import Summary
 
 
 class JiraDumper(BaseDumper):
@@ -35,8 +33,6 @@ class JiraDumper(BaseDumper):
         include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
-        obsidian_mode: bool = False,
-        obsidian_auto_output: bool = False,
         **kwargs,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
@@ -45,57 +41,6 @@ class JiraDumper(BaseDumper):
         self.include_images = include_images
         self.all_attachments = all_attachments
         self.debug = debug
-        self.obsidian_mode = obsidian_mode
-        self.obsidian_auto_output = obsidian_auto_output
-        # Set by the Obsidian dump path so attachments land in the vault's
-        # assets directory instead of next to the note.
-        self._obsidian_attachment_target: tuple[Path, str] | None = None
-
-    def dump(self) -> None:
-        if not self.obsidian_mode:
-            super().dump()
-            return
-
-        from ctxd.obsidian import (
-            resolve_attachments_base_dir,
-            resolve_attachments_dir_rel,
-            sanitize_note_stem,
-            wrap_with_frontmatter,
-        )
-
-        self.summary = Summary(source="jira")
-        self.validate_auth()
-        raw = self.fetch()
-        key = raw["key"]
-        summary = raw["fields"].get("summary", "Untitled")
-        title = f"[{key}] {summary}"
-
-        if self.output:
-            output_path = Path(self.output)
-        else:
-            stem = sanitize_note_stem(title, fallback=f"jira-{key}")
-            output_path = Path.cwd() / f"{stem}.md"
-
-        attachments_dir_rel = resolve_attachments_dir_rel()
-        if attachments_dir_rel.is_absolute():
-            attachments_dir_abs = attachments_dir_rel
-        else:
-            attachments_dir_abs = resolve_attachments_base_dir(output_path) / attachments_dir_rel
-        self._obsidian_attachment_target = (attachments_dir_abs, attachments_dir_rel.as_posix())
-
-        body = self.transform(raw)
-        from ctxd.dumpers.base import _apply_stdout_limit
-        content = wrap_with_frontmatter(body, "jira", self.url, title)
-        # P1-6: apply --max-chars to Obsidian file output when explicitly set.
-        if self.max_chars > 0:
-            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="file")
-
-        from ctxd.dumpers.base import _atomic_write_text
-        _atomic_write_text(output_path, content)
-        self.log(f"✅ Saved to {output_path}")
-        self.summary.resources_rendered = 1
-        self.summary.artifacts_written = 1
-        self._emit_and_manifest(manifest_path=output_path)
 
     def validate_auth(self) -> None:
         base_url, email, token = ensure_jira_auth()
@@ -453,12 +398,9 @@ class JiraDumper(BaseDumper):
     def _attachment_target(self) -> tuple[Path, str] | None:
         """Return ``(absolute_dir, relative_prefix)`` for downloaded files.
 
-        Obsidian mode writes into the vault's assets directory; normal file
-        output gets a sibling ``<stem>_attachments/`` directory.  Returns
+        File output gets a sibling ``<stem>_attachments/`` directory.  Returns
         None when the output is stdout (nothing to be relative to).
         """
-        if self._obsidian_attachment_target is not None:
-            return self._obsidian_attachment_target
         if not self.output:
             return None
         out = Path(self.output)

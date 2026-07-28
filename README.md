@@ -49,8 +49,8 @@ ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 # Confluence page tree with images -> local directory
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
-# Jira issue -> Obsidian-ready note
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 --obsidian -O
+# Jira issue with referenced images -> local file
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
 
 ## Supported Sources
@@ -294,7 +294,7 @@ Every issue export ends with an `Attachments` section listing filename, MIME typ
 | `-i, --include-images` | Download images referenced from the issue body (default: off) |
 | `--all-attachments` | Download every attachment on the issue (default: off) |
 
-Downloaded files go to `<output-stem>_attachments/` (or the Obsidian assets directory under `--obsidian`), named `<attachment-id>-<filename>` so same-named uploads never overwrite each other. Attachment URLs in the description, comments and custom fields are rewritten to the local relative paths; anything that failed to download keeps its original remote URL.
+Downloaded files go to `<output-stem>_attachments/`, named `<attachment-id>-<filename>` so same-named uploads never overwrite each other. Attachment URLs in the description, comments and custom fields are rewritten to the local relative paths; anything that failed to download keeps its original remote URL.
 
 > **Note**: `-i` / `--all-attachments` require `-o <file>` or `-O`. When an issue has attachments and neither flag is set, the run summary says how many were skipped and which flag to use.
 

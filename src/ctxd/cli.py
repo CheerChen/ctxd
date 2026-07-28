@@ -39,8 +39,6 @@ from ctxd.router import Source, detect
               help="Confluence/Jira: download referenced images (requires -o or -O)")
 @click.option("--all-attachments", is_flag=True, default=False,
               help="Confluence/Jira: download every attachment (requires -o or -O)")
-@click.option("--obsidian", is_flag=True, default=False,
-              help="Confluence/Jira: write an Obsidian note (frontmatter + body); requires -o or -O")
 @click.option("--debug", is_flag=True, default=False)
 @click.option("--profile", "profile", is_flag=True, default=False,
               help="Print HTTP/subprocess/stage timing breakdown to stderr after dump")
@@ -80,7 +78,6 @@ def main(
     recursive: bool,
     include_images: bool,
     all_attachments: bool,
-    obsidian: bool,
     debug: bool,
     profile: bool,
     max_concurrency: int,
@@ -125,15 +122,6 @@ def main(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    if obsidian:
-        _validate_obsidian_flags(
-            source=source,
-            output=output,
-            auto_output=auto_output,
-            recursive=recursive,
-            fmt=fmt,
-        )
-
     # Auto-quiet when stderr is being piped/redirected (not a TTY), unless the
     # user explicitly asked for quiet or verbose.
     if (
@@ -164,8 +152,6 @@ def main(
             include_images=include_images,
             all_attachments=all_attachments,
             debug=debug,
-            obsidian_mode=obsidian,
-            obsidian_auto_output=auto_output and obsidian,
             max_chars=max_chars,
             max_file_size=resolved_max_file_size,
             max_run_size=resolved_max_run_size,
@@ -201,8 +187,6 @@ def main(
             include_images=include_images,
             all_attachments=all_attachments,
             debug=debug,
-            obsidian_mode=obsidian,
-            obsidian_auto_output=auto_output and obsidian,
             max_chars=max_chars,
             max_file_size=resolved_max_file_size,
             max_run_size=resolved_max_run_size,
@@ -228,8 +212,8 @@ def main(
         recurse_depth = 0
 
     # Cross-source recursion is incompatible with Confluence directory export
-    # (which writes a page tree to disk) and with Obsidian single-note mode.
-    use_recurse = recurse_depth > 0 and not obsidian
+    # (which writes a page tree to disk).
+    use_recurse = recurse_depth > 0
     if use_recurse and source is Source.CONFLUENCE and (output is not None or auto_output):
         if not quiet:
             click.echo(
@@ -243,16 +227,13 @@ def main(
     # itself a directory.  Everywhere else -o accepts "file or directory":
     # an existing directory gets the default filename appended, instead of
     # failing at rename time with "Is a directory".
-    writes_directory = source is Source.CONFLUENCE and not obsidian
+    writes_directory = source is Source.CONFLUENCE
 
     resolved_output: Path | None = output
-    if auto_output and not obsidian:
+    if auto_output:
         resolved_output = Path(dumper.default_filename())
     elif resolved_output is not None and not writes_directory and resolved_output.is_dir():
-        name = dumper.default_filename()
-        if obsidian and not Path(name).suffix:
-            name = f"{name}.md"
-        resolved_output = resolved_output / name
+        resolved_output = resolved_output / dumper.default_filename()
 
     if use_recurse:
         # render_with_recurse collects content as a string; we handle the
@@ -287,9 +268,7 @@ def main(
             emit_report()
         return
 
-    if obsidian:
-        pass  # dumper handles its own path resolution and parent dir creation
-    elif resolved_output and source is Source.CONFLUENCE:
+    if resolved_output and source is Source.CONFLUENCE:
         resolved_output.mkdir(parents=True, exist_ok=True)
     elif resolved_output:
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -327,25 +306,6 @@ def _emit_shell_alias(shell: str | None) -> None:
         return
 
     click.echo("alias ctx ctxd")
-
-
-def _validate_obsidian_flags(
-    source: Source,
-    output: Path | None,
-    auto_output: bool,
-    recursive: bool,
-    fmt: str,
-) -> None:
-    if source not in (Source.CONFLUENCE, Source.JIRA):
-        raise click.UsageError("--obsidian only supports Confluence and Jira URLs")
-    if output is None and not auto_output:
-        raise click.UsageError("--obsidian requires -o <file> or -O")
-    if recursive:
-        raise click.UsageError(
-            "--obsidian does not support -r/--recursive (export pages individually)"
-        )
-    if fmt != "md":
-        raise click.UsageError("--obsidian requires markdown format (incompatible with -f text)")
 
 
 def _validate_slack_flags(

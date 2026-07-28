@@ -380,7 +380,7 @@ class TestManifestOutputModes:
 
     def test_emit_and_manifest_with_explicit_path(self, tmp_path: Path) -> None:
         """_emit_and_manifest with explicit manifest_path writes manifest
-        even when self.output is None (Obsidian -O auto-naming)."""
+        even when self.output is None."""
         from ctxd.dumpers.jira import JiraDumper
 
         d = JiraDumper(
@@ -452,79 +452,3 @@ class TestConfluencePageStatusTmpPath:
         result = d._export_page(page_data, export_dir, {}, threading.Lock())
         assert result.status is PageStatus.WRITTEN
         assert (export_dir / "123_Test" / "README.md").exists()
-
-
-# ---------------------------------------------------------------------------
-# Obsidian -O auto-naming manifest generation (阻断#3)
-# ---------------------------------------------------------------------------
-
-class TestObsidianAutoNameManifest:
-    """Obsidian -O auto-naming must write a manifest even when
-    self.output is None (the output path is resolved locally)."""
-
-    def test_jira_obsidian_auto_name_writes_manifest(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        from ctxd.dumpers.jira import JiraDumper
-
-        d = JiraDumper(
-            url="https://test.atlassian.net/browse/PROJ-1",
-            output=None, fmt="md", quiet=True,
-            obsidian_mode=True, obsidian_auto_output=True,
-        )
-        d.client = MagicMock()
-        d.client.get_issue = MagicMock(return_value={
-            "key": "PROJ-1", "fields": {"summary": "Test"}, "renderedFields": {}, "names": {},
-        })
-        d.client.get_comments = MagicMock(return_value=[])
-        # Bypass validate_auth to avoid real API client construction.
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-
-        monkeypatch.chdir(tmp_path)
-        d.dump()
-
-        # The note file should exist
-        notes = list(tmp_path.glob("*.md"))
-        assert len(notes) == 1
-        # The manifest must exist alongside it
-        manifests = list(tmp_path.glob("*.md.manifest.json"))
-        assert len(manifests) == 1, f"Expected 1 manifest, found {manifests}"
-        data = json.loads(manifests[0].read_text())
-        assert data["source"] == "jira"
-        assert data["artifacts_written"] == 1
-
-    def test_confluence_obsidian_auto_name_writes_manifest(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        from ctxd.dumpers.confluence import ConfluenceDumper
-
-        d = ConfluenceDumper(
-            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/title",
-            output=None, fmt="md", quiet=True,
-        )
-        d.obsidian_mode = True
-        d.client = MagicMock()
-        d.client.base_url = "https://test.atlassian.net"
-        d.client.get_page = MagicMock(return_value={
-            "id": "123", "title": "Test Page",
-            "body": {"storage": {"value": "<p>content</p>"}},
-        })
-        d.client.get_attachments = MagicMock(return_value=[])
-        d.client.get_inline_comments = MagicMock(return_value=[])
-        d.client.get_footer_comments = MagicMock(return_value=[])
-        d.client.get_space_name = MagicMock(return_value="SPACE")
-        d.client.get_user_display_name = MagicMock(return_value="Author")
-        # Bypass validate_auth and _resolve_short_link to avoid real API calls.
-        monkeypatch.setattr(d, "validate_auth", lambda: None)
-        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
-
-        monkeypatch.chdir(tmp_path)
-        d.dump()
-
-        notes = list(tmp_path.glob("*.md"))
-        assert len(notes) == 1
-        manifests = list(tmp_path.glob("*.md.manifest.json"))
-        assert len(manifests) == 1, f"Expected 1 manifest, found {manifests}"
-        data = json.loads(manifests[0].read_text())
-        assert data["source"] == "confluence"
-        assert data["artifacts_written"] == 1
