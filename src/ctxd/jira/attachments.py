@@ -16,11 +16,11 @@ import re
 from dataclasses import dataclass
 
 # Attachment URL forms seen in rendered Jira HTML / Markdown.
-# The API version varies (2 or 3) and thumbnails point at the same id.
+# The API version varies (2 or 3); a thumbnail carries the same id as the
+# full-size file, so both resolve to the same downloaded copy.
 _ATTACHMENT_URL_RE = re.compile(
     r"(?:https?://[^\s)\"']+)?"
-    r"/(?:rest/api/\d+/attachment/(?:content|thumbnail)/(?P<rest_id>\d+)"
-    r"|secure/attachment/(?P<secure_id>\d+)/[^\s)\"']*)"
+    r"/rest/api/\d+/attachment/(?:content|thumbnail)/(?P<id>\d+)"
 )
 
 _IMAGE_MIME_PREFIX = "image/"
@@ -79,7 +79,7 @@ def referenced_ids(*html_or_markdown: str) -> set[str]:
         if not text:
             continue
         for match in _ATTACHMENT_URL_RE.finditer(text):
-            found.add(match.group("rest_id") or match.group("secure_id"))
+            found.add(match.group("id"))
     return found
 
 
@@ -112,8 +112,7 @@ def rewrite_attachment_links(content: str, local_paths: dict[str, str]) -> str:
         return content
 
     def _replace(match: re.Match[str]) -> str:
-        att_id = match.group("rest_id") or match.group("secure_id")
-        return local_paths.get(att_id, match.group(0))
+        return local_paths.get(match.group("id"), match.group(0))
 
     return _ATTACHMENT_URL_RE.sub(_replace, content)
 

@@ -36,18 +36,6 @@ def test_attachment_download_url_accepts_trailing_slash_base() -> None:
     assert attachment_download_url(f"{_BASE}/", _ATTACHMENT) == _DOWNLOAD_URL
 
 
-def test_attachment_download_url_passes_absolute_link_through() -> None:
-    attachment = {"title": "x.png", "downloadLink": "https://cdn.example.com/x.png"}
-
-    assert attachment_download_url(_BASE, attachment) == "https://cdn.example.com/x.png"
-
-
-def test_attachment_download_url_falls_back_to_links_download() -> None:
-    attachment = {"title": "x.png", "_links": {"download": "/rest/api/content/1/x"}}
-
-    assert attachment_download_url(_BASE, attachment) == f"{_BASE}/wiki/rest/api/content/1/x"
-
-
 def test_attachment_download_url_empty_without_link() -> None:
     assert attachment_download_url(_BASE, {"title": "x.png"}) == ""
 

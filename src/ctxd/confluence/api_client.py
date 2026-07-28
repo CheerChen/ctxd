@@ -30,11 +30,9 @@ def attachment_download_url(base_url: str, attachment: dict[str, Any]) -> str:
 
     Returns an empty string when the metadata carries no download link.
     """
-    link = attachment.get("downloadLink") or attachment.get("_links", {}).get("download") or ""
+    link = attachment.get("downloadLink") or ""
     if not link:
         return ""
-    if link.startswith("http://") or link.startswith("https://"):
-        return link
     return f"{base_url.rstrip('/')}/wiki{link}"
 
 

@@ -48,7 +48,7 @@ def test_parse_attachments_missing_field() -> None:
 @pytest.mark.parametrize("text,expected", [
     (_DESCRIPTION_HTML, {"543376"}),
     ("![x](https://example.atlassian.net/rest/api/2/attachment/content/7)", {"7"}),
-    ('<img src="/secure/attachment/12345/foo.png">', {"12345"}),
+    ("/rest/api/3/attachment/content/12345", {"12345"}),
     ('<img src="https://example.atlassian.net/rest/api/3/attachment/thumbnail/8">', {"8"}),
     ("no attachments here", set()),
 ])
