@@ -90,19 +90,24 @@ class BaseDumper(ABC):
         content = self.render()
         self.summary.resources_rendered = 1
         self.summary.artifacts_written = 1
+        self.write_output(content)
+        self._emit_and_manifest()
 
+    def write_output(self, content: str) -> None:
+        """Write rendered content to ``self.output`` (atomically) or stdout.
+
+        The single place that applies the ``--max-chars`` limit: always for
+        stdout; for file output only when explicitly set (> 0).  0 = default
+        (stdout-only limit), -1 = unlimited.
+        """
         if self.output:
-            # When --max-chars is explicitly set (> 0), apply the limit
-            # to file output too.  0 = default (stdout-only limit), -1 = unlimited.
             if self.max_chars > 0:
                 content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="file")
-            self._write_text_file(self.output, content)
+            _atomic_write_text(Path(self.output), content)
             self.log(f"✅ Saved to {self.output}")
         else:
             content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="stdout")
             sys.stdout.write(content)
-
-        self._emit_and_manifest()
 
     def _emit_and_manifest(self, manifest_path: Path | None = None) -> None:
         """Emit the summary to stderr and write a manifest if output is a file.
@@ -117,14 +122,6 @@ class BaseDumper(ABC):
         if out_path is not None:
             manifest = self.summary.write_manifest(out_path)
             self.log(f"📋 Manifest: {manifest}")
-
-    def _write_text_file(self, path: str, content: str) -> None:
-        """Write text content to *path* atomically.
-
-        Writes to a temporary file first, then renames to the final path.
-        This prevents partial files if the process is interrupted.
-        """
-        _atomic_write_text(Path(path), content)
 
     def log(self, message: str) -> None:
         """Progress message — suppressed by ``--quiet``."""

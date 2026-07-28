@@ -7,6 +7,7 @@
 
 ### Changed
 * **Source dispatch goes through a registry** : the CLI and the cross-source recursion module each hand-rolled an if/elif chain mapping URL type to dumper class, duplicating every shared constructor argument four times. Both now use `ctxd.dumpers.DUMPERS` (`Source → dumper class`); adding a source means one route, one class, one registry entry. Tests that need a fake dumper patch the registry entry (`monkeypatch.setitem(DUMPERS, ...)`) instead of a CLI module attribute.
+* **One output pipeline** : the "apply `--max-chars` → write atomically → log / stdout" sequence existed in four copies (base dump, the CLI recursion branch, the Confluence stdout path, and the removed Obsidian paths) — the CLI copy reached into `ctxd.dumpers.base` private helpers to do it. It is now a single `BaseDumper.write_output()`; every path that emits a primary artifact calls it.
 
 ## [0.4.6]
 

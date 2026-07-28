@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -140,12 +138,10 @@ class ConfluenceDumper(BaseDumper):
         if not self.output:
             with timed("stage.transform"):
                 content = self.transform(raw)
-            from ctxd.dumpers.base import _apply_stdout_limit
-            content = _apply_stdout_limit(content, self.max_chars, self.summary, channel="stdout")
             self.summary.resources_fetched = 1
             self.summary.resources_rendered = 1
             self.summary.artifacts_written = 1
-            sys.stdout.write(content)
+            self.write_output(content)
             self._emit_and_manifest()
             return
 

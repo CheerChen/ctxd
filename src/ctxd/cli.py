@@ -234,16 +234,7 @@ def main(
             except Exception as exc:
                 raise click.ClickException(str(exc)) from exc
 
-            if resolved_output:
-                from ctxd.dumpers.base import _atomic_write_text, _apply_stdout_limit
-                if dumper.max_chars > 0:
-                    content = _apply_stdout_limit(content, dumper.max_chars, dumper.summary, channel="file")
-                _atomic_write_text(resolved_output, content)
-                dumper.log(f"✅ Saved to {resolved_output}")
-            else:
-                from ctxd.dumpers.base import _apply_stdout_limit
-                content = _apply_stdout_limit(content, dumper.max_chars, dumper.summary, channel="stdout")
-                sys.stdout.write(content)
+            dumper.write_output(content)
             # Recursion embeds all child content into one artifact.
             dumper.summary.artifacts_written = 1
             dumper._emit_and_manifest()
