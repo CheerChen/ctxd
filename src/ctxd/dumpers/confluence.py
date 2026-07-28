@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ctxd.auth import ensure_confluence_auth
 from ctxd.concurrency import parallel_map
-from ctxd.confluence.api_client import ConfluenceClient
+from ctxd.confluence.api_client import ConfluenceClient, build_attachment_urls
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, parse_short_link
 from ctxd.dumpers.base import BaseDumper
@@ -116,7 +116,13 @@ class ConfluenceDumper(BaseDumper):
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
         metadata_block = self._build_metadata_block(page, notes_out=self.summary.notes)
-        markdown, _, marker_line_map = html_to_markdown(html_content or "", image_map={}, base_url=self.client.base_url)
+        fallback_urls = self._image_fallback_urls(
+            page_id, html_content or "", image_map={}, notes_out=self.summary.notes,
+        )
+        markdown, _, marker_line_map = html_to_markdown(
+            html_content or "", image_map={}, base_url=self.client.base_url,
+            fallback_urls=fallback_urls,
+        )
         # Title "# {title}\n\n" = 2 lines; metadata block contributes its own newlines.
         offset = 2 + metadata_block.count("\n")
         marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
@@ -250,8 +256,13 @@ class ConfluenceDumper(BaseDumper):
         }
 
         metadata_block = self._build_metadata_block(page, notes_out=obsidian_notes)
+        fallback_urls = self._image_fallback_urls(
+            page_id, html_content, image_map=image_map,
+            notes_out=obsidian_notes, attachments=attachments_meta,
+        )
         markdown, _, marker_line_map = html_to_markdown(
-            html_content, image_map=image_map, base_url=self.client.base_url
+            html_content, image_map=image_map, base_url=self.client.base_url,
+            fallback_urls=fallback_urls,
         )
         offset = 2 + metadata_block.count("\n")
         marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
@@ -344,8 +355,12 @@ class ConfluenceDumper(BaseDumper):
                 _atomic_write_text(raw_path, html_content)
 
             image_map: dict[str, str] = {}
+            attachments_meta: list[dict] | None = None
             if self.include_images:
                 with timed("stage.attachments"):
+                    # Fetched once and shared with the fallback-URL builder
+                    # so an -i run makes no extra attachments call.
+                    attachments_meta = self._page_attachments(page_id, worker_notes)
                     image_map = self._download_page_images(
                         page_id=page_id,
                         page_html=html_content,
@@ -354,12 +369,20 @@ class ConfluenceDumper(BaseDumper):
                         pool_lock=pool_lock,
                         notes_out=worker_notes,
                         run_budget=run_budget,
+                        attachments=attachments_meta,
                     )
 
             base_url = self.client.base_url if self.client else None
             metadata_block = self._build_metadata_block(page_data, notes_out=worker_notes)
+            fallback_urls = self._image_fallback_urls(
+                page_id, html_content, image_map=image_map,
+                notes_out=worker_notes, attachments=attachments_meta,
+            )
             with timed("stage.transform"):
-                markdown, _, marker_line_map = html_to_markdown(html_content, image_map=image_map, base_url=base_url)
+                markdown, _, marker_line_map = html_to_markdown(
+                    html_content, image_map=image_map, base_url=base_url,
+                    fallback_urls=fallback_urls,
+                )
             offset = 2 + metadata_block.count("\n")
             marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
             markdown = f"# {title}\n\n{metadata_block}{markdown}"
@@ -395,6 +418,55 @@ class ConfluenceDumper(BaseDumper):
                 status=PageStatus.FAILED, page_id=page_id,
                 title=title, reason=str(exc), notes=worker_notes,
             )
+
+    def _page_attachments(self, page_id: str, notes_out: list[str] | None = None) -> list[dict]:
+        if self.client is None:
+            return []
+        try:
+            return self.client.get_attachments(page_id)
+        except Exception as exc:
+            self.warn(f"    ⚠ Failed to fetch attachments for page {page_id}: {exc}")
+            if notes_out is not None:
+                notes_out.append(f"attachments fetch failed (page {page_id}): {exc}")
+            return []
+
+    def _image_fallback_urls(
+        self,
+        page_id: str,
+        html: str,
+        image_map: dict[str, str],
+        notes_out: list[str] | None = None,
+        attachments: list[dict] | None = None,
+    ) -> dict[str, str]:
+        """Remote download URLs for images that were not saved locally.
+
+        Without this, an image the run did not download renders as
+        ``images/<filename>`` — a path that only exists for a directory
+        export with ``-i``, leaving every other mode with a dead link and
+        no way to reach the file.  Costs one extra API call, and only for
+        pages that actually embed images.
+        """
+        referenced = extract_confluence_images(html)
+        if not referenced:
+            return {}
+
+        if attachments is None:
+            attachments = self._page_attachments(page_id, notes_out)
+        urls = build_attachment_urls(self.client.base_url if self.client else "", attachments)
+
+        missing = [name for name in referenced if name not in image_map]
+        if missing and notes_out is not None:
+            unreachable = [name for name in missing if name not in urls]
+            notes_out.append(
+                f"{len(missing)} image(s) not downloaded (use -i); "
+                f"links point at the Confluence download URL"
+            )
+            if unreachable:
+                notes_out.append(
+                    f"{len(unreachable)} image(s) have no attachment URL: "
+                    f"{', '.join(sorted(unreachable))}"
+                )
+        return urls
 
     def _fetch_and_format_comments(
         self,
@@ -452,6 +524,7 @@ class ConfluenceDumper(BaseDumper):
         pool_lock: threading.Lock,
         notes_out: list[str] | None = None,
         run_budget=None,
+        attachments: list[dict] | None = None,
     ) -> dict[str, str]:
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
@@ -462,7 +535,8 @@ class ConfluenceDumper(BaseDumper):
 
         image_map: dict[str, str] = {}
         try:
-            attachments = self.client.get_attachments(page_id)
+            if attachments is None:
+                attachments = self.client.get_attachments(page_id)
             attachment_map: dict[str, dict] = {}
             for attachment in attachments:
                 filename = attachment.get("title", "")

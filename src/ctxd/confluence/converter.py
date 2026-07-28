@@ -57,7 +57,30 @@ def convert_code_macros(html: str) -> str:
     return re.sub(pattern, replace_code_block, html, flags=re.DOTALL)
 
 
-def convert_confluence_images(html: str, image_map: dict[str, str]) -> str:
+def resolve_image_src(
+    filename: str,
+    image_map: dict[str, str],
+    fallback_urls: dict[str, str] | None = None,
+) -> str:
+    """Where an image reference should point.
+
+    Preference order: the local copy if it was downloaded, otherwise the
+    attachment's remote download URL.  The bare ``images/<filename>`` path
+    is the last resort — it only resolves for a directory export run with
+    ``-i``, so callers should supply *fallback_urls* whenever they can.
+    """
+    local = image_map.get(filename)
+    if local:
+        return local
+    remote = (fallback_urls or {}).get(filename)
+    if remote:
+        return remote
+    return f"images/{filename}"
+
+
+def convert_confluence_images(
+    html: str, image_map: dict[str, str], fallback_urls: dict[str, str] | None = None
+) -> str:
     def replace_ac_image(match: re.Match[str]) -> str:
         full_tag = match.group(0)
         alt_match = re.search(r'ac:alt="([^"]+)"', full_tag)
@@ -67,13 +90,15 @@ def convert_confluence_images(html: str, image_map: dict[str, str]) -> str:
             return ""
 
         filename = filename_match.group(1)
-        src = image_map.get(filename, f"images/{filename}")
+        src = resolve_image_src(filename, image_map, fallback_urls)
         return f'<img src="{src}" alt="{alt}" />'
 
     return re.sub(r"<ac:image[^>]*>.*?</ac:image>", replace_ac_image, html, flags=re.DOTALL)
 
 
-def convert_drawio_macros(html: str, image_map: dict[str, str]) -> str:
+def convert_drawio_macros(
+    html: str, image_map: dict[str, str], fallback_urls: dict[str, str] | None = None
+) -> str:
     def replace_drawio(match: re.Match[str]) -> str:
         full_tag = match.group(0)
         name_match = re.search(r'<ac:parameter ac:name="diagramName">([^<]+)</ac:parameter>', full_tag)
@@ -81,7 +106,7 @@ def convert_drawio_macros(html: str, image_map: dict[str, str]) -> str:
             return ""
         diagram_name = name_match.group(1)
         png_filename = f"{diagram_name}.png"
-        src = image_map.get(png_filename, f"images/{png_filename}")
+        src = resolve_image_src(png_filename, image_map, fallback_urls)
         return f'<img src="{src}" alt="{diagram_name}" />'
 
     pattern = r'<ac:structured-macro[^>]*ac:name="drawio"[^>]*>.*?</ac:structured-macro>'
@@ -128,14 +153,16 @@ def convert_internal_links(html: str, base_url: str | None = None) -> str:
     return re.sub(pattern, replace_ac_link, html, flags=re.DOTALL)
 
 
-def convert_plantuml_macros(html: str, image_map: dict[str, str]) -> str:
+def convert_plantuml_macros(
+    html: str, image_map: dict[str, str], fallback_urls: dict[str, str] | None = None
+) -> str:
     def replace_plantuml(match: re.Match[str]) -> str:
         full_tag = match.group(0)
         name_match = re.search(r'<ac:parameter ac:name="filename">([^<]+)</ac:parameter>', full_tag)
         if not name_match:
             return ""
         filename = name_match.group(1)
-        src = image_map.get(filename, f"images/{filename}")
+        src = resolve_image_src(filename, image_map, fallback_urls)
         return f'<img src="{src}" alt="PlantUML diagram" />'
 
     pattern = r'<ac:structured-macro[^>]*ac:name="plantuml[^"]*"[^>]*>.*?</ac:structured-macro>'
@@ -233,6 +260,7 @@ def html_to_markdown(
     html: str,
     image_map: dict[str, str] | None = None,
     base_url: str | None = None,
+    fallback_urls: dict[str, str] | None = None,
 ) -> Tuple[str, List[str], dict[str, int]]:
     if image_map is None:
         image_map = {}
@@ -240,10 +268,10 @@ def html_to_markdown(
     image_filenames = extract_confluence_images(html)
     html, marker_refs = _extract_marker_lines(html)
     html = convert_internal_links(html, base_url=base_url)
-    html = convert_confluence_images(html, image_map)
-    html = convert_drawio_macros(html, image_map)
+    html = convert_confluence_images(html, image_map, fallback_urls)
+    html = convert_drawio_macros(html, image_map, fallback_urls)
     html = convert_code_macros(html)
-    html = convert_plantuml_macros(html, image_map)
+    html = convert_plantuml_macros(html, image_map, fallback_urls)
 
     markdown = markdownify.markdownify(html, heading_style="ATX", bullets="*", strip=["script", "style"])
     markdown, marker_line_map = _resolve_marker_lines(markdown, marker_refs)

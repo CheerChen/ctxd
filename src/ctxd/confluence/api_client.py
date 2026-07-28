@@ -21,6 +21,36 @@ def _warn(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def attachment_download_url(base_url: str, attachment: dict[str, Any]) -> str:
+    """Absolute, durable download URL for a Confluence attachment.
+
+    This is the v1 REST download endpoint, which accepts API-token Basic
+    auth and 302-redirects to a freshly signed media URL on each request.
+    Unlike the media URL itself it embeds no token and does not expire, so
+    it is safe to write into an exported artifact.  (The legacy
+    ``/wiki/download/attachments/...`` path answers 401 for API tokens.)
+
+    Returns an empty string when the metadata carries no download link.
+    """
+    link = attachment.get("downloadLink") or attachment.get("_links", {}).get("download") or ""
+    if not link:
+        return ""
+    if link.startswith("http://") or link.startswith("https://"):
+        return link
+    return f"{base_url.rstrip('/')}/wiki{link}"
+
+
+def build_attachment_urls(base_url: str, attachments: list[dict[str, Any]]) -> dict[str, str]:
+    """Map ``filename -> download URL`` for the given attachments."""
+    urls: dict[str, str] = {}
+    for attachment in attachments:
+        filename = str(attachment.get("title", "")).strip()
+        url = attachment_download_url(base_url, attachment)
+        if filename and url:
+            urls[filename] = url
+    return urls
+
+
 class ConfluenceClient:
     def __init__(self, base_url: str, email: str, api_token: str):
         self.base_url = base_url.rstrip("/")

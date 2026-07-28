@@ -263,6 +263,8 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 | `--all-attachments` | 下载所有附件（默认仅下载正文引用的图片） |
 | `--debug` | 保存原始 HTML 用于排查 |
 
+没有下载的图片不会被丢弃：链接指向该附件的 REST 下载地址，用同一个 API token 就能取（`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`），且不含会过期的 token。运行摘要会说明有多少张图保持为远程链接。
+
 ---
 
 ## Jira

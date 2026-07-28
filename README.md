@@ -256,6 +256,8 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 | `--all-attachments` | Download all attachments (default: only referenced images) |
 | `--debug` | Save raw HTML for debugging |
 
+Images that are not downloaded are not dropped: they link to the attachment's REST download URL, which works with the same API token (`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`) and embeds no expiring token. The run summary reports how many images were left remote.
+
 ---
 
 ## Jira
