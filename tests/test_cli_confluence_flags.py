@@ -3,6 +3,7 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from ctxd.cli import main
+from ctxd.dumpers import DUMPERS
 from ctxd.router import Source
 
 
@@ -39,7 +40,7 @@ _CONF_URL = "https://foo.atlassian.net/wiki/spaces/ABC/pages/123/title"
 def test_confluence_stdout_single_page_is_default(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
-    monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
 
     result = runner.invoke(main, [_CONF_URL])
 
@@ -52,7 +53,7 @@ def test_confluence_stdout_single_page_is_default(monkeypatch) -> None:
 def test_confluence_recursive_without_output_errors(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
-    monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
 
     result = runner.invoke(main, [_CONF_URL, "-r"])
 
@@ -65,7 +66,7 @@ def test_confluence_recursive_without_output_errors(monkeypatch) -> None:
 def test_confluence_include_images_without_output_errors(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
-    monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
 
     result = runner.invoke(main, [_CONF_URL, "-i"])
 
@@ -77,7 +78,7 @@ def test_confluence_include_images_without_output_errors(monkeypatch) -> None:
 def test_confluence_recursive_with_output_succeeds(monkeypatch, tmp_path) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
-    monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
 
     out = tmp_path / "export"
     result = runner.invoke(main, [_CONF_URL, "-r", "-i", "-o", str(out)])

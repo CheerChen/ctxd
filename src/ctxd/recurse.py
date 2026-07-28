@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 
 from ctxd.auth import AuthError
-from ctxd.dumpers import ConfluenceDumper, GitHubPRDumper, JiraDumper, SlackDumper
+from ctxd.dumpers import DUMPERS
 from ctxd.profiling import record, timed
 from ctxd.router import Source, detect, parse_slack_thread_url
 
@@ -88,27 +88,10 @@ def _build_dumper(url: str, opts: _RecurseOpts):
     max_file_size = opts.max_file_size if opts.max_file_size != 0 else DEFAULT_MAX_FILE_BYTES
     max_run_size = opts.max_run_size if opts.max_run_size != 0 else DEFAULT_MAX_RUN_BYTES
 
-    source = detect(url)
-    if source is Source.SLACK_THREAD:
-        d = SlackDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
-            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
-        )
-    elif source is Source.GITHUB_PR:
-        d = GitHubPRDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
-            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
-        )
-    elif source is Source.CONFLUENCE:
-        d = ConfluenceDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
-            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
-        )
-    else:
-        d = JiraDumper(
-            url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
-            max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
-        )
+    d = DUMPERS[detect(url)](
+        url=url, output=None, fmt=opts.fmt, quiet=opts.quiet, verbose=opts.verbose,
+        max_chars=opts.max_chars, max_file_size=max_file_size, max_run_size=max_run_size,
+    )
     # Share the parent's run budget so all downloads in the recursion
     # tree count against the same per-run cap.
     if opts.run_budget is not None:

@@ -5,6 +5,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from ctxd.cli import main
+from ctxd.dumpers import DUMPERS
 from ctxd.router import Source
 
 
@@ -35,7 +36,7 @@ _JIRA_URL = "https://foo.atlassian.net/browse/DEV-42"
 
 def _runner(monkeypatch) -> CliRunner:
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.JIRA)
-    monkeypatch.setattr("ctxd.cli.JiraDumper", _FakeJiraDumper)
+    monkeypatch.setitem(DUMPERS, Source.JIRA, _FakeJiraDumper)
     return CliRunner()
 
 

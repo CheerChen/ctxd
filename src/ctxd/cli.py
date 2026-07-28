@@ -11,7 +11,7 @@ from click.core import ParameterSource
 from ctxd import __version__
 from ctxd.auth import AuthError
 from ctxd.concurrency import configure as configure_concurrency
-from ctxd.dumpers import ConfluenceDumper, GitHubPRDumper, JiraDumper, SlackDumper
+from ctxd.dumpers import DUMPERS
 from ctxd.profiling import emit_report, enable_profiling
 from ctxd.recurse import render_with_recurse
 from ctxd.router import Source, detect
@@ -133,6 +133,19 @@ def main(
 
     output_str = str(output) if output else None
 
+    # Options every dumper accepts; source-specific flags are validated and
+    # collected per branch, then DUMPERS picks the class.
+    common_kwargs = {
+        "url": url,
+        "output": output_str,
+        "fmt": fmt,
+        "quiet": quiet,
+        "verbose": verbose,
+        "max_chars": max_chars,
+        "max_file_size": resolved_max_file_size,
+        "max_run_size": resolved_max_run_size,
+    }
+
     if source is Source.CONFLUENCE:
         _validate_confluence_flags(
             url=url,
@@ -142,34 +155,18 @@ def main(
             include_images=include_images,
             all_attachments=all_attachments,
         )
-        dumper = ConfluenceDumper(
-            url=url,
-            output=output_str,
-            fmt=fmt,
-            quiet=quiet,
-            verbose=verbose,
-            recursive=recursive,
-            include_images=include_images,
-            all_attachments=all_attachments,
-            debug=debug,
-            max_chars=max_chars,
-            max_file_size=resolved_max_file_size,
-            max_run_size=resolved_max_run_size,
-        )
+        extra_kwargs = {
+            "recursive": recursive,
+            "include_images": include_images,
+            "all_attachments": all_attachments,
+            "debug": debug,
+        }
     elif source is Source.GITHUB_PR:
-        dumper = GitHubPRDumper(
-            url=url,
-            output=output_str,
-            fmt=fmt,
-            quiet=quiet,
-            verbose=verbose,
-            diff_mode=diff_mode,
-            clean_body=clean_body,
-            no_bots=no_bots,
-            max_chars=max_chars,
-            max_file_size=resolved_max_file_size,
-            max_run_size=resolved_max_run_size,
-        )
+        extra_kwargs = {
+            "diff_mode": diff_mode,
+            "clean_body": clean_body,
+            "no_bots": no_bots,
+        }
     elif source is Source.JIRA:
         _validate_jira_flags(
             url=url,
@@ -178,35 +175,21 @@ def main(
             include_images=include_images,
             all_attachments=all_attachments,
         )
-        dumper = JiraDumper(
-            url=url,
-            output=output_str,
-            fmt=fmt,
-            quiet=quiet,
-            verbose=verbose,
-            include_images=include_images,
-            all_attachments=all_attachments,
-            debug=debug,
-            max_chars=max_chars,
-            max_file_size=resolved_max_file_size,
-            max_run_size=resolved_max_run_size,
-        )
+        extra_kwargs = {
+            "include_images": include_images,
+            "all_attachments": all_attachments,
+            "debug": debug,
+        }
     else:
         _validate_slack_flags(
             url=url, output=output, auto_output=auto_output, download_files=download_files,
         )
-        dumper = SlackDumper(
-            url=url,
-            output=output_str,
-            fmt=fmt,
-            quiet=quiet,
-            verbose=verbose,
-            download_files=download_files,
-            raw=raw,
-            max_chars=max_chars,
-            max_file_size=resolved_max_file_size,
-            max_run_size=resolved_max_run_size,
-        )
+        extra_kwargs = {
+            "download_files": download_files,
+            "raw": raw,
+        }
+
+    dumper = DUMPERS[source](**common_kwargs, **extra_kwargs)
 
     if no_recurse:
         recurse_depth = 0

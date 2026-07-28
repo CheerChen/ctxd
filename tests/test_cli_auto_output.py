@@ -5,6 +5,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from ctxd.cli import main
+from ctxd.dumpers import DUMPERS
 from ctxd.router import Source
 
 
@@ -48,7 +49,7 @@ class _FakeConfluenceDumper(_FakeBaseDumper):
 def test_auto_output_for_github(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
-    monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
+    monkeypatch.setitem(DUMPERS, Source.GITHUB_PR, _FakeGitHubDumper)
 
     result = runner.invoke(main, ["-O", "https://github.com/o/r/pull/9"])
 
@@ -60,7 +61,7 @@ def test_auto_output_for_github(monkeypatch) -> None:
 def test_auto_output_for_slack(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.SLACK_THREAD)
-    monkeypatch.setattr("ctxd.cli.SlackDumper", _FakeSlackDumper)
+    monkeypatch.setitem(DUMPERS, Source.SLACK_THREAD, _FakeSlackDumper)
 
     result = runner.invoke(main, ["-O", "https://foo.slack.com/archives/C123/p1735881234123456"])
 
@@ -72,7 +73,7 @@ def test_auto_output_for_slack(monkeypatch) -> None:
 def test_auto_output_for_confluence_creates_directory(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
-    monkeypatch.setattr("ctxd.cli.ConfluenceDumper", _FakeConfluenceDumper)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
 
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["-O", "https://foo.atlassian.net/wiki/spaces/ABC/pages/3140419873/title"])
@@ -86,7 +87,7 @@ def test_auto_output_for_confluence_creates_directory(monkeypatch) -> None:
 def test_output_and_auto_output_are_mutually_exclusive(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
-    monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
+    monkeypatch.setitem(DUMPERS, Source.GITHUB_PR, _FakeGitHubDumper)
 
     result = runner.invoke(main, ["-o", "pr.md", "-O", "https://github.com/o/r/pull/9"])
 

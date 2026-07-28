@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from ctxd.cli import main
+from ctxd.dumpers import DUMPERS
 from ctxd.dumpers.slack import SlackDumper
 from ctxd.router import Source
 
@@ -131,7 +132,7 @@ class _FakeSlackDumper:
 @pytest.fixture
 def runner(monkeypatch) -> CliRunner:
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.SLACK_THREAD)
-    monkeypatch.setattr("ctxd.cli.SlackDumper", _FakeSlackDumper)
+    monkeypatch.setitem(DUMPERS, Source.SLACK_THREAD, _FakeSlackDumper)
     return CliRunner()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from ctxd.cli import main
+from ctxd.dumpers import DUMPERS
 from ctxd.router import Source
 
 
@@ -32,7 +33,7 @@ class _FakeGitHubDumper:
 def test_supports_option_after_url(monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.GITHUB_PR)
-    monkeypatch.setattr("ctxd.cli.GitHubPRDumper", _FakeGitHubDumper)
+    monkeypatch.setitem(DUMPERS, Source.GITHUB_PR, _FakeGitHubDumper)
 
     result = runner.invoke(main, ["https://github.com/o/r/pull/9", "-q", "-O"])
 
