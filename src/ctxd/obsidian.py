@@ -65,7 +65,7 @@ class AttachmentRef:
     source_name: str
     target_name: str
     target_rel_path: str
-    file_id: str
+    attachment_id: str
     page_id: str
 
 
@@ -77,8 +77,8 @@ def build_attachment_refs(
     refs: dict[str, AttachmentRef] = {}
     for attachment in attachments:
         source_name = str(attachment.get("title", "")).strip()
-        file_id = str(attachment.get("fileId", "")).strip()
-        if not source_name or not file_id:
+        attachment_id = str(attachment.get("id", "")).strip()
+        if not source_name or not attachment_id:
             continue
         attachment_page_id = str(attachment.get("pageId", "")).strip() or page_id
         target_name = f"{page_id}-{sanitize_attachment_name(source_name)}"
@@ -87,7 +87,7 @@ def build_attachment_refs(
             source_name=source_name,
             target_name=target_name,
             target_rel_path=target_rel_path,
-            file_id=file_id,
+            attachment_id=attachment_id,
             page_id=attachment_page_id,
         )
     return refs
@@ -112,7 +112,7 @@ def refresh_attachments(
         for ref in desired_refs:
             tmp_path = tmp_dir / ref.target_name
             content = client.download_attachment(
-                file_id=ref.file_id, page_id=ref.page_id,
+                attachment_id=ref.attachment_id, page_id=ref.page_id,
                 max_bytes=max_bytes,
             )
             if run_budget is not None:

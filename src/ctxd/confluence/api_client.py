@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import sys
 import threading
 from typing import Any, Callable, TypeVar
@@ -59,13 +57,8 @@ class ConfluenceClient:
         self.session.headers.update({"Accept": "application/json"})
         mount_retry(self.session)
         instrument_session(self.session, "confluence")
-        # Media downloads use URL-embedded tokens, not Basic auth.
-        self._media_session = requests.Session()
-        mount_retry(self._media_session)
-        instrument_session(self._media_session, "confluence_media")
         self._user_cache: dict[str, str] = {}
         self._space_cache: dict[str, str] = {}
-        self._media_token_cache: dict[str, tuple[str, str, str]] = {}
         # Per-cache key-level locks so concurrent fetches for the SAME key
         # collapse to one HTTP call, while different keys remain parallel.
         self._cache_meta_lock = threading.Lock()
@@ -241,17 +234,20 @@ class ConfluenceClient:
 
         return all_children
 
-    def download_attachment(self, file_id: str, page_id: str, max_bytes: int | None = None) -> bytes:
+    def download_attachment(
+        self, attachment_id: str, page_id: str, max_bytes: int | None = None
+    ) -> bytes:
         # The legacy /wiki/download/attachments/... endpoint rejects API token
-        # Basic auth with 401 (its WWW-Authenticate hint demands OAuth). The
-        # working path is the Atlassian Media Service, which accepts a per-page
-        # JWT mediaToken issued by the v1 REST API.
-        token, client_id, collection_id = self._get_media_token(page_id)
+        # Basic auth with 401 (its WWW-Authenticate hint demands OAuth), but
+        # the v1 REST download endpoint accepts it and 302-redirects to a
+        # freshly signed media URL. requests drops the Authorization header on
+        # that cross-host hop, which is exactly what the signed URL wants — so
+        # no hand-built media token is needed.
         url = (
-            f"https://api.media.atlassian.com/file/{file_id}/binary"
-            f"?token={token}&client={client_id}&collection={collection_id}"
+            f"{self.base_url}/wiki/rest/api/content/{page_id}"
+            f"/child/attachment/{attachment_id}/download"
         )
-        resp = self._media_session.get(url, timeout=60, stream=True)
+        resp = self.session.get(url, timeout=60, stream=True, headers={"Accept": "*/*"})
         resp.raise_for_status()
         # Check Content-Length against per-file limit before downloading.
         # max_bytes < 0 or None means unlimited.
@@ -280,21 +276,4 @@ class ConfluenceClient:
             resp.close()
         return b"".join(chunks)
 
-    def _get_media_token(self, page_id: str) -> tuple[str, str, str]:
-        def fetch() -> tuple[str, str, str]:
-            url = f"{self.base_url}/wiki/rest/api/content/{page_id}?expand=body.view.mediaToken"
-            resp = self.session.get(url, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            mt = (data.get("body", {}).get("view", {}) or {}).get("mediaToken") or {}
-            token = mt.get("token")
-            collection_ids = mt.get("collectionIds") or []
-            if not token or not collection_ids:
-                raise RuntimeError(f"No mediaToken returned for page {page_id}")
 
-            payload_b64 = token.split(".")[1]
-            payload_b64 += "=" * (-len(payload_b64) % 4)
-            client_id = json.loads(base64.urlsafe_b64decode(payload_b64))["iss"]
-            return (token, client_id, collection_ids[0])
-
-        return self._locked_compute(self._media_token_cache, page_id, "media_token", fetch)

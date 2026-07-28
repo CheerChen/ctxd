@@ -82,14 +82,14 @@ def test_build_attachment_refs_prefixes_page_id() -> None:
     refs = build_attachment_refs(
         page_id="123",
         attachments=[
-            {"title": "image one.png", "fileId": "uuid-A", "pageId": "123"},
-            {"title": "diagram.svg", "fileId": "uuid-B", "pageId": "123"},
+            {"title": "image one.png", "id": "att-A", "pageId": "123"},
+            {"title": "diagram.svg", "id": "att-B", "pageId": "123"},
         ],
         attachments_dir_rel=Path("assets"),
     )
     assert refs["image one.png"].target_name == "123-image one.png"
     assert refs["image one.png"].target_rel_path == "assets/123-image one.png"
-    assert refs["diagram.svg"].file_id == "uuid-B"
+    assert refs["diagram.svg"].attachment_id == "att-B"
     assert refs["diagram.svg"].page_id == "123"
 
 
@@ -97,9 +97,9 @@ def test_build_attachment_refs_skips_invalid() -> None:
     refs = build_attachment_refs(
         page_id="123",
         attachments=[
-            {"title": "", "fileId": "uuid"},
-            {"title": "ok.png", "fileId": ""},
-            {"title": "good.png", "fileId": "uuid-good"},
+            {"title": "", "id": "att-x"},
+            {"title": "ok.png", "id": ""},
+            {"title": "good.png", "id": "att-good"},
         ],
         attachments_dir_rel=Path("assets"),
     )
@@ -109,7 +109,7 @@ def test_build_attachment_refs_skips_invalid() -> None:
 def test_build_attachment_refs_falls_back_to_outer_page_id() -> None:
     refs = build_attachment_refs(
         page_id="parent",
-        attachments=[{"title": "x.png", "fileId": "uuid-x"}],
+        attachments=[{"title": "x.png", "id": "att-x"}],
         attachments_dir_rel=Path("assets"),
     )
     assert refs["x.png"].page_id == "parent"
@@ -117,7 +117,7 @@ def test_build_attachment_refs_falls_back_to_outer_page_id() -> None:
 
 def test_refresh_attachments_writes_and_cleans(tmp_path: Path) -> None:
     client = MagicMock()
-    client.download_attachment.side_effect = lambda file_id, page_id, **kw: f"data-for-{file_id}".encode()
+    client.download_attachment.side_effect = lambda attachment_id, page_id, **kw: f"data-for-{attachment_id}".encode()
 
     attachments_dir = tmp_path / "assets"
     attachments_dir.mkdir()
@@ -131,17 +131,17 @@ def test_refresh_attachments_writes_and_cleans(tmp_path: Path) -> None:
             source_name="new.png",
             target_name="999-new.png",
             target_rel_path="assets/999-new.png",
-            file_id="uuid-new",
+            attachment_id="att-new",
             page_id="999",
         ),
     ]
     count = refresh_attachments(client, "999", refs, attachments_dir)
 
     assert count == 1
-    assert (attachments_dir / "999-new.png").read_bytes() == b"data-for-uuid-new"
+    assert (attachments_dir / "999-new.png").read_bytes() == b"data-for-att-new"
     assert not (attachments_dir / "999-old.png").exists()
     assert (attachments_dir / "888-other.png").exists()
-    client.download_attachment.assert_called_once_with(file_id="uuid-new", page_id="999", max_bytes=52428800)
+    client.download_attachment.assert_called_once_with(attachment_id="att-new", page_id="999", max_bytes=52428800)
 
 
 def test_resolve_attachments_dir_rel_default(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -7,6 +7,7 @@
 * **Jira `Attachments` section** : every issue export lists each attachment with filename, MIME type and size, whether or not it was downloaded. When attachments exist and no download flag was passed, the run summary states how many were skipped and which flag to use, so the omission is never silent.
 
 ### Changed
+* **Confluence attachment downloads dropped the hand-built media token** : downloads went through `api.media.atlassian.com` with a per-page JWT `mediaToken`, which meant an extra API call, base64-decoding the JWT payload to recover the client id, a token cache with its own locking, and a second `requests` session. The v1 REST download endpoint accepts API-token Basic auth and 302-redirects to the same signed media URL, so all of that is now one `session.get`. Byte-identical output, unchanged wall time (the redirect hops overlap with the parallel workers), and the same endpoint that images fall back to when they are not downloaded. Note this trades one token call for one redirect hop per file, so total round-trips go up slightly for image-heavy pages. `AttachmentRef.file_id` became `AttachmentRef.attachment_id` accordingly.
 * **Slack `--download-files` requires `-o`/`-O`** : without an output path it silently created `./attachments` in the current working directory. It now fails with the two corrected commands, matching how Confluence and Jira already treat their download flags. The flag also gained help text, which it never had.
 
 ### Fixed

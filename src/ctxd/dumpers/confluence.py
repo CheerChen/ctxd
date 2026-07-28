@@ -572,9 +572,9 @@ class ConfluenceDumper(BaseDumper):
                     self.warn(f"    ⚠ Referenced image not found in attachments: {filename}")
                     _note(f"missing attachment: {filename}")
                     continue
-                if not attachment.get("fileId"):
-                    self.warn(f"    ⚠ Skipping {filename}: no fileId in attachment metadata")
-                    _note(f"attachment skipped (no fileId): {filename}")
+                if not attachment.get("id"):
+                    self.warn(f"    ⚠ Skipping {filename}: no id in attachment metadata")
+                    _note(f"attachment skipped (no id): {filename}")
                     continue
                 download_targets.append((filename, attachment))
 
@@ -583,7 +583,7 @@ class ConfluenceDumper(BaseDumper):
                 try:
                     from ctxd.download_limits import DownloadLimitExceeded
                     content = self.client.download_attachment(
-                        file_id=attachment["fileId"],
+                        attachment_id=attachment["id"],
                         page_id=attachment.get("pageId") or page_id,
                         max_bytes=self.max_file_size,
                     )

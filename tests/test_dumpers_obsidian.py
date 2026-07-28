@@ -99,8 +99,8 @@ def test_confluence_obsidian_downloads_referenced_images(tmp_path: Path) -> None
     page = _stub_page(body_html=body_html)
     client.get_page = MagicMock(return_value=page)
     client.get_attachments = MagicMock(return_value=[
-        {"title": "diagram.png", "fileId": "uuid-diagram", "pageId": "12345"},
-        {"title": "unused.pdf", "fileId": "uuid-unused", "pageId": "12345"},
+        {"title": "diagram.png", "id": "att-diagram", "pageId": "12345"},
+        {"title": "unused.pdf", "id": "att-unused", "pageId": "12345"},
     ])
     client.get_inline_comments = MagicMock(return_value=[])
     client.get_footer_comments = MagicMock(return_value=[])
@@ -129,7 +129,7 @@ def test_confluence_obsidian_cleans_stale_attachments(tmp_path: Path) -> None:
     page = _stub_page(body_html=body_html)
     client.get_page = MagicMock(return_value=page)
     client.get_attachments = MagicMock(return_value=[
-        {"title": "kept.png", "fileId": "uuid-kept", "pageId": "12345"},
+        {"title": "kept.png", "id": "att-kept", "pageId": "12345"},
     ])
     client.get_inline_comments = MagicMock(return_value=[])
     client.get_footer_comments = MagicMock(return_value=[])
@@ -155,7 +155,7 @@ def test_confluence_obsidian_attachments_go_to_vault_root(tmp_path: Path) -> Non
     page = _stub_page(body_html=body_html)
     client.get_page = MagicMock(return_value=page)
     client.get_attachments = MagicMock(return_value=[
-        {"title": "diagram.png", "fileId": "uuid-diagram", "pageId": "12345"},
+        {"title": "diagram.png", "id": "att-diagram", "pageId": "12345"},
     ])
     client.get_inline_comments = MagicMock(return_value=[])
     client.get_footer_comments = MagicMock(return_value=[])
@@ -176,7 +176,7 @@ def test_confluence_obsidian_all_attachments(tmp_path: Path) -> None:
     page = _stub_page(body_html="<p>no images</p>")
     client.get_page = MagicMock(return_value=page)
     client.get_attachments = MagicMock(return_value=[
-        {"title": "report.pdf", "fileId": "uuid-report", "pageId": "12345"},
+        {"title": "report.pdf", "id": "att-report", "pageId": "12345"},
     ])
     client.get_inline_comments = MagicMock(return_value=[])
     client.get_footer_comments = MagicMock(return_value=[])
