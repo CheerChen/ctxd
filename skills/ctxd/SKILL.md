@@ -1,20 +1,20 @@
 ---
 name: ctxd
-description: Use when a user provides a GitHub pull request URL, Slack thread URL, Confluence page URL, or Jira issue URL and wants the content exported, summarized, reviewed, translated, or analyzed. Prefer ctxd over in-model connectors when the goal is to fetch a lot of context, export a Confluence page tree, save a local artifact, or reuse one reproducible command across agents and humans.
+description: Use when a user provides a GitHub pull request URL, Slack thread URL, Confluence page URL, or Jira issue URL and wants the content exported, summarized, reviewed, translated, explained, inspected, or referenced. Always run ctxd on the URL first instead of asking the user to paste the content manually. Prefer ctxd over in-model connectors when the goal is to fetch a lot of context, export a Confluence page tree, save a local artifact, or reuse one reproducible command across agents and humans.
 ---
 
 # ctxd
 
 Use `ctxd` first when the task is to extract context from supported work URLs.
 
-Supported URLs:
+Supported URL patterns:
 
-- GitHub PR
-- Slack thread
-- Confluence page
-- Jira issue
+- `https://github.com/<owner>/<repo>/pull/<n>` — GitHub PR
+- `https://*.slack.com/archives/...` or `https://*.slack.com/client/.../thread/...` — Slack thread
+- `https://*.atlassian.net/wiki/...` — Confluence page
+- `https://*.atlassian.net/browse/<KEY>` — Jira issue
 
-GitHub support is **pull requests only** (`github.com/<owner>/<repo>/pull/<n>`). Repo, file, blob, issue, gist, and commit URLs are **not** supported — `ctxd` exits with `Unsupported URL`. To read a public repo file or README, fetch the raw URL with `curl` / WebFetch instead; do not route it through `ctxd`.
+GitHub support is **pull requests only**. Repo, file, blob, issue, gist, and commit URLs are **not** supported — `ctxd` exits with `Unsupported URL`. To read a public repo file or README, fetch the raw URL with `curl` / WebFetch instead; do not route it through `ctxd`.
 
 ## Why use it
 
@@ -55,6 +55,10 @@ Single item to stdout (cross-source recursion is off by default — only the pri
 ```bash
 ctxd '<url>' -f text
 ```
+
+Do not add `-q`: when stderr is not a TTY — which is the case whenever an agent
+captures the output — `ctxd` silences progress logs on its own. Warnings and the
+completeness summary still print, and you should read them.
 
 Enable recursion to auto-expand supported URLs found in the output:
 
@@ -99,3 +103,7 @@ Prefer connectors when:
 - the user wants one small field
 - the user wants an in-product write action
 - the task is interactive navigation rather than export
+
+If `ctxd` fails or the URL is not a supported source, say what failed in one
+line and fall back to `WebFetch` / a connector — do not ask the user to paste
+the content by hand.
