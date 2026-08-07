@@ -92,16 +92,14 @@ Typical keys:
 
 ```bash
 SLACK_TOKEN=xoxp-...
+GITHUB_TOKEN=ghp_...
 CONFLUENCE_BASE_URL=https://your-site.atlassian.net
 CONFLUENCE_EMAIL=you@example.com
 CONFLUENCE_API_TOKEN=your-token
 ```
 
-GitHub PR export uses `gh`, so make sure this is valid too:
-
-```bash
-gh auth status
-```
+Every key can also come from the environment, which takes precedence over the
+file. `chmod 600` the file — ctxd warns on stderr if it is group/world readable.
 
 ## Global Options
 
@@ -112,7 +110,7 @@ gh auth status
 | `-f, --format text\|md` | Output format (default: `md`) |
 | `-q, --quiet` | Suppress progress logs only — warnings and the completeness summary always print (auto-enabled when stderr is not a TTY) |
 | `-v, --verbose` | Verbose logging |
-| `--profile` | Print stage / HTTP / subprocess timing summary |
+| `--profile` | Print stage / HTTP timing summary |
 | `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
 | `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `0`=off, max `2`; opt-in with `1`/`2`) |
 | `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`; kept for explicitness) |
@@ -130,12 +128,20 @@ Export PR metadata, reviews, inline comments, timeline comments, and code change
 
 ### Prerequisites
 
-Install and authenticate [GitHub CLI](https://cli.github.com/):
+A GitHub token in `GITHUB_TOKEN` (env or `~/.config/ctxd/config`). Create a
+[classic PAT](https://github.com/settings/tokens/new) with the **`repo`** scope:
 
 ```bash
-brew install gh
-gh auth login
+GITHUB_TOKEN=ghp_...
 ```
+
+`repo` covers every repository you have access to plus all public ones. For a
+repository in a SAML-protected organization, also authorize the token for that
+org from the token list page, or the API returns 404 as if the repo did not
+exist.
+
+> Avoid fine-grained PATs here: they are limited to a single resource owner, so
+> a token scoped to one organization cannot read public repos elsewhere.
 
 ### Usage
 

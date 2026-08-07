@@ -10,10 +10,13 @@ import io
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
+from conftest import FakeGitHubClient
 from ctxd.dumpers.base import BaseDumper
 from ctxd.dumpers.github_pr import GitHubPRDumper
 from ctxd.dumpers.slack import SlackDumper
+from ctxd.github.api_client import GitHubAPIError
 
 
 # ---------------------------------------------------------------------------
@@ -70,36 +73,45 @@ class TestGitHubPRNeverSilent:
         d.pr_number = "1"
         return d
 
-    def test_api_paginate_warns_on_nonzero_exit(
+    def test_api_paginate_warns_on_api_error(
         self, capsys: pytest.CaptureFixture
     ) -> None:
         d = self._make_dumper(quiet=True)
-        proc = MagicMock(returncode=1, stderr="rate limited", stdout="")
-        with patch("ctxd.dumpers.github_pr.subprocess.run", return_value=proc):
-            result = d._gh_api_paginate("/repos/o/r/issues/1/comments")
+        d.client = FakeGitHubClient(fail=GitHubAPIError("GitHub API 403: rate limited"))
+        result = d._paginate("/repos/o/r/issues/1/comments")
         assert result == []
         captured = capsys.readouterr()
         assert "GitHub API call failed" in captured.err
         assert "rate limited" in captured.err
 
+    def test_api_paginate_warns_on_transport_error(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        d = self._make_dumper(quiet=True)
+        d.client = FakeGitHubClient(fail=requests.ConnectionError("connection reset"))
+        result = d._paginate("/repos/o/r/issues/1/comments")
+        assert result == []
+        captured = capsys.readouterr()
+        assert "GitHub API call failed" in captured.err
+        assert "connection reset" in captured.err
+
     def test_api_paginate_warns_on_json_error(
         self, capsys: pytest.CaptureFixture
     ) -> None:
         d = self._make_dumper(quiet=True)
-        proc = MagicMock(returncode=0, stderr="", stdout="not json")
-        with patch("ctxd.dumpers.github_pr.subprocess.run", return_value=proc):
-            result = d._gh_api_paginate("/repos/o/r/issues/1/comments")
+        d.client = FakeGitHubClient(fail=ValueError("Expecting value: line 1 column 1"))
+        result = d._paginate("/repos/o/r/issues/1/comments")
         assert result == []
         captured = capsys.readouterr()
-        assert "not valid JSON" in captured.err
+        assert "GitHub API call failed" in captured.err
+        assert "Expecting value" in captured.err
 
     def test_diff_fetch_warns_on_failure(
         self, capsys: pytest.CaptureFixture
     ) -> None:
         d = self._make_dumper(quiet=True)
-        proc = MagicMock(returncode=1, stderr="network error", stdout="")
-        with patch("ctxd.dumpers.github_pr.subprocess.run", return_value=proc):
-            result = d._fetch_unified_diff()
+        d.client = FakeGitHubClient(fail=requests.ConnectionError("network error"))
+        result = d._fetch_unified_diff()
         assert result == ""
         captured = capsys.readouterr()
         assert "PR diff fetch failed" in captured.err

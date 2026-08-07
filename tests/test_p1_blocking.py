@@ -9,15 +9,14 @@ Verifies:
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
 
+from conftest import install_fake_github
 from ctxd.cli import main
 
 
@@ -31,20 +30,7 @@ class TestCLIParameters:
 
     def test_max_chars_accepted(self, tmp_path: Path, monkeypatch) -> None:
         """CLI accepts --max-chars without error."""
-        monkeypatch.setattr("ctxd.dumpers.github_pr.ensure_github_auth", lambda: None)
-        monkeypatch.setattr("ctxd.auth.ensure_github_auth", lambda: None)
-
-        def mock_run(cmd, **kw):
-            s = " ".join(cmd)
-            if "pr view" in s:
-                return MagicMock(returncode=0, stdout=json.dumps({"title": "T", "body": "B"}), stderr="")
-            if "pr diff" in s:
-                return MagicMock(returncode=0, stdout="", stderr="")
-            if "api" in s:
-                return MagicMock(returncode=0, stdout="[]", stderr="")
-            return MagicMock(returncode=0, stdout="{}", stderr="")
-
-        monkeypatch.setattr("ctxd.dumpers.github_pr.subprocess.run", mock_run)
+        install_fake_github(monkeypatch, pull={"title": "T", "body": "B"})
 
         runner = CliRunner()
         result = runner.invoke(main, [
@@ -58,20 +44,7 @@ class TestCLIParameters:
 
     def test_max_chars_unlimited(self, tmp_path: Path, monkeypatch) -> None:
         """--max-chars -1 disables the limit."""
-        monkeypatch.setattr("ctxd.dumpers.github_pr.ensure_github_auth", lambda: None)
-        monkeypatch.setattr("ctxd.auth.ensure_github_auth", lambda: None)
-
-        def mock_run(cmd, **kw):
-            s = " ".join(cmd)
-            if "pr view" in s:
-                return MagicMock(returncode=0, stdout=json.dumps({"title": "T", "body": "B"}), stderr="")
-            if "pr diff" in s:
-                return MagicMock(returncode=0, stdout="", stderr="")
-            if "api" in s:
-                return MagicMock(returncode=0, stdout="[]", stderr="")
-            return MagicMock(returncode=0, stdout="{}", stderr="")
-
-        monkeypatch.setattr("ctxd.dumpers.github_pr.subprocess.run", mock_run)
+        install_fake_github(monkeypatch, pull={"title": "T", "body": "B"})
 
         runner = CliRunner()
         result = runner.invoke(main, [

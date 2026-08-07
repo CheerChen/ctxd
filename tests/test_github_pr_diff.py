@@ -58,7 +58,7 @@ def test_stat_diff_uses_pulls_files_api(monkeypatch) -> None:
     dumper = _make_dumper("stat")
     monkeypatch.setattr(
         dumper,
-        "_gh_api_paginate",
+        "_paginate",
         lambda path: [
             {"filename": "foo.py", "additions": 5, "deletions": 2},
             {"filename": "bar/baz.py", "additions": 0, "deletions": 3},
@@ -74,5 +74,5 @@ def test_stat_diff_uses_pulls_files_api(monkeypatch) -> None:
 
 def test_stat_diff_empty_returns_placeholder(monkeypatch) -> None:
     dumper = _make_dumper("stat")
-    monkeypatch.setattr(dumper, "_gh_api_paginate", lambda path: [])
+    monkeypatch.setattr(dumper, "_paginate", lambda path: [])
     assert dumper._generate_diff() == GitHubPRDumper._NO_DIFF

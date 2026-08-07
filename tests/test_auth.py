@@ -15,6 +15,7 @@ def _isolated_config(tmp_path, monkeypatch):
     auth._reset_cache_for_tests()
     for var in (
         "SLACK_TOKEN",
+        "GITHUB_TOKEN",
         "CONFLUENCE_BASE_URL",
         "CONFLUENCE_EMAIL",
         "CONFLUENCE_API_TOKEN",
@@ -39,6 +40,28 @@ def test_env_wins_over_file(_isolated_config, monkeypatch) -> None:
 def test_file_used_when_env_missing(_isolated_config) -> None:
     _write_config(_isolated_config, "SLACK_TOKEN=from-file\n")
     assert auth.get_slack_token() == "from-file"
+
+
+def test_github_token_from_file(_isolated_config) -> None:
+    _write_config(_isolated_config, "GITHUB_TOKEN=ghp_from_file\n")
+    assert auth.get_github_token() == "ghp_from_file"
+
+
+def test_github_token_env_wins_over_file(_isolated_config, monkeypatch) -> None:
+    _write_config(_isolated_config, "GITHUB_TOKEN=ghp_from_file\n")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_from_env")
+    assert auth.get_github_token() == "ghp_from_env"
+
+
+def test_github_token_missing_raises_with_both_options(_isolated_config) -> None:
+    """The message has to be enough to fix it without reading the source."""
+    with pytest.raises(auth.AuthError) as exc:
+        auth.get_github_token()
+    msg = str(exc.value)
+    assert "GITHUB_TOKEN" in msg
+    assert str(_isolated_config) in msg
+    assert "github.com/settings/tokens" in msg
+    assert "repo" in msg
 
 
 def test_confluence_all_from_file(_isolated_config) -> None:

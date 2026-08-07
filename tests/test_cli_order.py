@@ -43,10 +43,24 @@ def test_supports_option_after_url(monkeypatch) -> None:
     assert _FakeGitHubDumper.last_instance.output == "pr-9.md"
 
 
-def test_init_shell_still_works() -> None:
+def test_init_zsh_emits_only_the_noglob_alias() -> None:
     runner = CliRunner()
 
     result = runner.invoke(main, ["init", "zsh"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "alias ctxd='noglob ctxd'\nalias ctx='noglob ctxd'"
+    assert result.output.strip() == "alias ctxd='noglob ctxd'"
+
+
+def test_init_bash_and_fish_emit_no_alias() -> None:
+    """noglob is zsh-only, so other shells get a comment, not an alias.
+
+    The output still has to be safe to `eval`, which a comment is.
+    """
+    runner = CliRunner()
+
+    for shell in ("bash", "fish"):
+        result = runner.invoke(main, ["init", shell])
+        assert result.exit_code == 0
+        assert result.output.startswith("#")
+        assert "alias" not in result.output

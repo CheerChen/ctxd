@@ -42,9 +42,11 @@ Confluence and Jira:
 
 GitHub PR:
 
-- valid `gh auth status`
+- `GITHUB_TOKEN` (classic PAT, `repo` scope)
 
-If auth is missing, say which key or login is required.
+If auth is missing, say which key is required. `ctxd` does not use the `gh` CLI,
+so `gh auth login` / `gh auth switch` has no effect on it, and the current
+working directory never changes which account it fetches as.
 
 ## Default commands
 

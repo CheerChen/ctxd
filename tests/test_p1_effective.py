@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from click.testing import CliRunner
 
+from conftest import install_fake_github
 from ctxd.cli import main
 
 
@@ -28,24 +29,15 @@ class TestMaxCharsFileOutput:
         manifest records truncated=1."""
         from ctxd.dumpers.github_pr import GitHubPRDumper
 
-        monkeypatch.setattr("ctxd.dumpers.github_pr.ensure_github_auth", lambda: None)
-        monkeypatch.setattr("ctxd.auth.ensure_github_auth", lambda: None)
-
         # Generate ~10K chars of body content
         long_body = "A" * 10000
         long_diff = "diff --git a/file b/file\n+line\n" * 200  # ~10K
 
-        def mock_run(cmd, **kw):
-            s = " ".join(cmd)
-            if "pr view" in s:
-                return MagicMock(returncode=0, stdout=json.dumps({"title": "T", "body": long_body}), stderr="")
-            if "pr diff" in s:
-                return MagicMock(returncode=0, stdout=long_diff, stderr="")
-            if "api" in s:
-                return MagicMock(returncode=0, stdout="[]", stderr="")
-            return MagicMock(returncode=0, stdout="{}", stderr="")
-
-        monkeypatch.setattr("ctxd.dumpers.github_pr.subprocess.run", mock_run)
+        install_fake_github(
+            monkeypatch,
+            pull={"title": "T", "body": long_body},
+            diff=long_diff,
+        )
 
         out_file = tmp_path / "out.md"
         runner = CliRunner()

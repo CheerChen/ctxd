@@ -99,16 +99,14 @@ agent 真正能用 `ctxd` 取数，前提是认证已经配好。
 
 ```bash
 SLACK_TOKEN=xoxp-...
+GITHUB_TOKEN=ghp_...
 CONFLUENCE_BASE_URL=https://your-site.atlassian.net
 CONFLUENCE_EMAIL=you@example.com
 CONFLUENCE_API_TOKEN=your-token
 ```
 
-GitHub PR 还依赖 `gh`，所以也要确保 gh 已经登录：
-
-```bash
-gh auth status
-```
+所有配置项都可以改用环境变量，环境变量优先于配置文件。建议对配置文件执行
+`chmod 600`——如果同组或其他用户可读，ctxd 会在 stderr 给出提醒。
 
 ## 通用参数
 
@@ -119,7 +117,7 @@ gh auth status
 | `-f, --format text\|md` | 输出格式（默认 `md`） |
 | `-q, --quiet` | 仅抑制进度日志——告警与完整性摘要始终输出（stderr 非 TTY 时自动启用） |
 | `-v, --verbose` | 详细日志 |
-| `--profile` | 打印 stage / HTTP / subprocess 耗时摘要 |
+| `--profile` | 打印 stage / HTTP 耗时摘要 |
 | `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
 | `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `0`=关闭，最大 `2`；需手动 `1`/`2` 开启） |
 | `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`；保留以便显式声明） |
@@ -137,12 +135,20 @@ gh auth status
 
 ### 前置条件
 
-安装并登录 [GitHub CLI](https://cli.github.com/)：
+在 `GITHUB_TOKEN`（环境变量或 `~/.config/ctxd/config`）中配置一个 GitHub token。
+到 [classic PAT 页面](https://github.com/settings/tokens/new)创建，勾选 **`repo`**
+权限：
 
 ```bash
-brew install gh
-gh auth login
+GITHUB_TOKEN=ghp_...
 ```
+
+`repo` 覆盖你有权访问的所有仓库以及全部公开仓库。如果目标仓库属于开启了 SAML 的
+组织，还需要在 token 列表页对该组织单独授权，否则 API 会返回 404，看起来就像仓库
+不存在。
+
+> 不建议用 fine-grained PAT：它只能访问单一 resource owner 的资源，绑定到某个组织
+> 之后就读不到其他 owner 名下的公开仓库了。
 
 ### 使用
 

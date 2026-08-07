@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -78,18 +76,18 @@ def _reset_cache_for_tests() -> None:
     _perms_warned = False
 
 
-def ensure_github_auth() -> None:
-    if not shutil.which("gh"):
-        raise AuthError("❌ GitHub CLI not found. Install: https://cli.github.com/")
-
-    proc = subprocess.run(
-        ["gh", "auth", "status"],
-        capture_output=True,
-        text=True,
-        check=False,
+def get_github_token() -> str:
+    token = _resolve("GITHUB_TOKEN")
+    if token:
+        return token
+    raise AuthError(
+        "❌ GitHub token not found.\n"
+        '   Set env: export GITHUB_TOKEN="ghp_..."\n'
+        f"   Or add to {CONFIG_PATH}: GITHUB_TOKEN=ghp_...\n"
+        "   Create one at https://github.com/settings/tokens/new with the\n"
+        "   'repo' scope. For a SAML-protected org, also authorize the token\n"
+        "   for that org from the token list page."
     )
-    if proc.returncode != 0:
-        raise AuthError("❌ GitHub CLI not authenticated.\n   Run: gh auth login")
 
 
 def get_slack_token() -> str:

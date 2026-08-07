@@ -1,8 +1,8 @@
 """Lightweight profiler for ctxd.
 
 Enabled via --profile flag. Records:
-- HTTP request counts and network time per source (Slack/Confluence/Jira/attachments)
-- subprocess call counts and wall time (gh)
+- HTTP request counts and network time per source
+  (Slack/GitHub/Confluence/Jira/attachments)
 - Coarse pipeline stages (fetch / transform / attachments / comments)
 
 Output is a stderr table printed after the dumper finishes.

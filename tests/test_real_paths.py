@@ -18,7 +18,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from conftest import install_fake_github
 from ctxd.cli import main
+from ctxd.github.api_client import GitHubAPIError
 
 
 # ---------------------------------------------------------------------------
@@ -110,29 +112,11 @@ class TestSingleFileCLIReal:
     def test_github_pr_single_file_with_manifest(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setattr("ctxd.dumpers.github_pr.ensure_github_auth",
-                            lambda: None)
-        monkeypatch.setattr("ctxd.auth.ensure_github_auth",
-                            lambda: None)
-
-        # Mock subprocess.run for gh CLI calls.
-        # _gh_json calls: gh pr view --json title,body
-        # _gh_api_paginate calls: gh api --paginate --slurp <path>
-        # _fetch_unified_diff calls: gh pr diff
-        def mock_run(cmd, **kwargs):
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-            if "pr view" in cmd_str:
-                return MagicMock(returncode=0,
-                                 stdout=json.dumps({"title": "Test PR", "body": "Test body"}),
-                                 stderr="")
-            if "pr diff" in cmd_str:
-                return MagicMock(returncode=0, stdout="diff --git a/x b/x\n", stderr="")
-            # gh api --paginate --slurp returns a JSON array
-            if "api" in cmd_str:
-                return MagicMock(returncode=0, stdout="[]", stderr="")
-            return MagicMock(returncode=0, stdout="{}", stderr="")
-
-        monkeypatch.setattr("ctxd.dumpers.github_pr.subprocess.run", mock_run)
+        install_fake_github(
+            monkeypatch,
+            pull={"title": "Test PR", "body": "Test body"},
+            diff="diff --git a/x b/x\n",
+        )
 
         out_file = tmp_path / "pr-1.md"
         runner = CliRunner()
@@ -213,15 +197,7 @@ class TestRecursiveCLIReal:
         monkeypatch.setattr("ctxd.dumpers.confluence.ConfluenceClient", FakeConfluenceClient)
 
         # GitHub grandchild fails
-        monkeypatch.setattr("ctxd.dumpers.github_pr.ensure_github_auth",
-                            lambda: None)
-        monkeypatch.setattr("ctxd.auth.ensure_github_auth",
-                            lambda: None)
-
-        def gh_fail(cmd, **kwargs):
-            return MagicMock(returncode=1, stdout="", stderr="rate limited")
-
-        monkeypatch.setattr("ctxd.dumpers.github_pr.subprocess.run", gh_fail)
+        install_fake_github(monkeypatch, fail=GitHubAPIError("rate limited"))
 
         out_file = tmp_path / "recursive.md"
         runner = CliRunner()

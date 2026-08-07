@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0]
+
+### Changed
+* **BREAKING — GitHub PR export uses `GITHUB_TOKEN`, not the `gh` CLI** : GitHub was the only source that authenticated by shelling out to another program, which made it the only source whose result depended on ambient state `ctxd` neither owned nor reported. `gh`'s active account is a single global mutable setting, and anyone running a per-directory account shim gets a tool whose output depends on the current working directory — a company PR fetched from the wrong directory failed with `Could not resolve to a Repository`, which reads as "this repo does not exist" when the real cause is "this token cannot see it". Neither a human nor an agent can act on that. GitHub now authenticates like Slack, Confluence and Jira: a token resolved from `GITHUB_TOKEN` in the environment or `~/.config/ctxd/config`. Set a [classic PAT](https://github.com/settings/tokens/new) with the `repo` scope; for a SAML-protected organization, authorize the token for that org or the API keeps returning 404. `gh auth login` / `gh auth switch` no longer affect `ctxd`, and `gh` need not be installed at all — the only remaining dependency is `uv`. Fine-grained PATs are a poor fit and are documented as such: they are limited to one resource owner, so a token bound to an organization cannot read public repositories elsewhere.
+* **The five `gh` subprocesses became five HTTP calls** : `gh pr view` → `GET /repos/{owner}/{repo}/pulls/{n}`, `gh api --paginate --slurp` → the same paths with a `Link: rel="next"` loop, `gh pr diff` → the PR endpoint with `Accept: application/vnd.github.v3.diff` (exactly what `gh` sent, including GitHub's own diff size caps). Output is byte-identical to the `gh` path on the same PR. The new `ctxd.github.api_client` shares the existing retry policy and profiling instrumentation, so PR fetches now appear under `http.github` in `--profile` instead of `subprocess.gh`, and the process no longer pays five subprocess spawns per PR.
+* **API failures name the likely cause** : non-2xx responses raise `GitHubAPIError` carrying the status, the path and GitHub's own message; for 401/403/404 they add what to check about `GITHUB_TOKEN` (scope, SSO authorization). Because a token that cannot see a repo fails all five parallel reads identically, the remediation hint is printed once per run while each individual failure still reports itself. A 403 caused by an exhausted rate limit says so instead, rather than sending you to inspect scopes.
+
+### Removed
+* **The `ctx` short alias** : `ctxd init <shell>` existed for two reasons — wrapping zsh's `noglob` so URLs containing `?` and `&` survive unquoted, and offering a three-letter alias. Only the first is load-bearing, so `ctxd init zsh` now emits just `alias ctxd='noglob ctxd'`. `noglob` is zsh-only, so `bash` and `fish` get a comment instead of an alias — still safe to `eval`, and honest about the fact that no alias can stop those shells from treating a bare `&` as backgrounding.
+
 ## [0.5.0]
 
 ### Removed

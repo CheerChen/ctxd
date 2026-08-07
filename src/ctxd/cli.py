@@ -41,10 +41,10 @@ from ctxd.router import Source, detect
               help="Confluence/Jira: download every attachment (requires -o or -O)")
 @click.option("--debug", is_flag=True, default=False)
 @click.option("--profile", "profile", is_flag=True, default=False,
-              help="Print HTTP/subprocess/stage timing breakdown to stderr after dump")
+              help="Print HTTP/stage timing breakdown to stderr after dump")
 @click.option("--max-concurrency", "max_concurrency", type=click.IntRange(1, 32),
               default=5, show_default=True,
-              help="Max concurrent HTTP / subprocess fan-out (Confluence pages, gh API)")
+              help="Max concurrent HTTP fan-out (Confluence pages, GitHub API)")
 @click.option("--recurse-depth", "recurse_depth", type=click.IntRange(0, 2),
               default=0, show_default=True,
               help="Cross-source recursion depth: expand supported URLs found in the output (0=off, default; 1-2 opt-in)")
@@ -272,14 +272,12 @@ def _emit_shell_alias(shell: str | None) -> None:
 
     if shell == "zsh":
         click.echo("alias ctxd='noglob ctxd'")
-        click.echo("alias ctx='noglob ctxd'")
         return
 
-    if shell == "bash":
-        click.echo("alias ctx=ctxd")
-        return
-
-    click.echo("alias ctx ctxd")
+    # Only zsh globs ? and [ in unquoted arguments, so only zsh needs an alias.
+    # bash and fish still treat a bare & as backgrounding, which no alias can
+    # fix — say so instead of emitting a pointless alias.
+    click.echo(f"# ctxd: nothing to set up for {shell}; quote URLs containing & or ?")
 
 
 def _validate_slack_flags(

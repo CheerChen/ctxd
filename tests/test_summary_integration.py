@@ -17,6 +17,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
+
+from conftest import FakeGitHubClient
+from ctxd.github.api_client import GitHubAPIError
 
 from ctxd.concurrency import configure, parallel_map
 from ctxd.summary import ExportResult, PageStatus, Summary
@@ -263,9 +267,8 @@ class TestWarningSummaryConsistency:
         d.repo = "r"
         d.pr_number = "1"
 
-        proc = MagicMock(returncode=1, stderr="rate limited", stdout="")
-        with patch("ctxd.dumpers.github_pr.subprocess.run", return_value=proc):
-            d._gh_api_paginate("/repos/o/r/issues/1/comments")
+        d.client = FakeGitHubClient(fail=GitHubAPIError("GitHub API 403: rate limited"))
+        d._paginate("/repos/o/r/issues/1/comments")
 
         captured = capsys.readouterr()
         assert "GitHub API call failed" in captured.err
@@ -283,9 +286,8 @@ class TestWarningSummaryConsistency:
         d.repo = "r"
         d.pr_number = "1"
 
-        proc = MagicMock(returncode=1, stderr="network error", stdout="")
-        with patch("ctxd.dumpers.github_pr.subprocess.run", return_value=proc):
-            d._fetch_unified_diff()
+        d.client = FakeGitHubClient(fail=requests.ConnectionError("network error"))
+        d._fetch_unified_diff()
 
         captured = capsys.readouterr()
         assert "PR diff fetch failed" in captured.err
