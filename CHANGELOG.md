@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.1]
+
+### Fixed
+* **Jira issue links always printed the outward label** : every entry in `issuelinks` was rendered with `type.outward` (e.g. "blocks") no matter which end of the link the linked issue sat on, so an issue that *is blocked by* another exported as `blocks KEY` — the relationship stated backwards. The label now follows the direction field: `outwardIssue` → `type.outward`, `inwardIssue` → `type.inward`, via a shared `_issue_link_parts` helper used by both the markdown and text formats.
+
 ## [0.6.0]
 
 ### Changed

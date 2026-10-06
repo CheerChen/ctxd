@@ -250,8 +250,7 @@ class JiraDumper(BaseDumper):
             lines.append("## Linked Issues")
             lines.append("")
             for link in issue_links:
-                link_type = link.get("type", {}).get("outward", "relates to")
-                target = link.get("outwardIssue") or link.get("inwardIssue")
+                link_type, target = _issue_link_parts(link)
                 if target:
                     t_key = target.get("key", "")
                     t_summary = target.get("fields", {}).get("summary", "")
@@ -355,8 +354,7 @@ class JiraDumper(BaseDumper):
         if issue_links:
             lines.append("--- LINKED ISSUES ---")
             for link in issue_links:
-                link_type = link.get("type", {}).get("outward", "relates to")
-                target = link.get("outwardIssue") or link.get("inwardIssue")
+                link_type, target = _issue_link_parts(link)
                 if target:
                     t_key = target.get("key", "")
                     t_summary = target.get("fields", {}).get("summary", "")
@@ -517,6 +515,20 @@ class JiraDumper(BaseDumper):
         from ctxd.dumpers.base import _atomic_write_text
         _atomic_write_text(debug_path, "".join(parts))
         self.log(f"🔍 Debug HTML saved to {debug_path}")
+
+
+def _issue_link_parts(link: dict) -> tuple[str, dict | None]:
+    """Return ``(label, linked_issue)`` for an issuelinks entry.
+
+    ``outwardIssue`` means this issue is the source, so ``type.outward``
+    describes the link (e.g. "blocks"); ``inwardIssue`` means this issue
+    is the target, so ``type.inward`` applies (e.g. "is blocked by").
+    """
+    if link.get("outwardIssue"):
+        return link.get("type", {}).get("outward", "relates to"), link["outwardIssue"]
+    if link.get("inwardIssue"):
+        return link.get("type", {}).get("inward", "relates to"), link["inwardIssue"]
+    return "", None
 
 
 def _nested_name(obj: dict | None) -> str:

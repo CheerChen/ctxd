@@ -112,6 +112,45 @@ def test_jira_dumper_transform_text() -> None:
     assert "URL:        https://example.atlassian.net/browse/INFRA-10588" in result
 
 
+def _link_type(name="Blocks"):
+    return {"name": name, "inward": "is blocked by", "outward": "blocks"}
+
+
+def _linked_issue(key):
+    return {"key": key, "fields": {"summary": f"{key} summary",
+                                   "status": {"name": "Open"}}}
+
+
+@pytest.mark.parametrize("fmt", ["md", "text"])
+def test_jira_issue_link_direction(fmt) -> None:
+    """Inward links must use type.inward, not always type.outward."""
+    from ctxd.dumpers.jira import JiraDumper
+
+    dumper = JiraDumper(
+        url="https://example.atlassian.net/browse/PROJ-4141",
+        output=None,
+        fmt=fmt,
+    )
+    raw = {
+        "key": "PROJ-4141",
+        "fields": {
+            "summary": "Test",
+            "status": {"name": "Open"},
+            "issuelinks": [
+                {"type": _link_type(), "inwardIssue": _linked_issue("PROJ-4046")},
+                {"type": _link_type(), "outwardIssue": _linked_issue("PROJ-5000")},
+            ],
+        },
+        "rendered": {},
+        "comments": [],
+    }
+    result = dumper.transform(raw)
+    assert "is blocked by" in result
+    assert "PROJ-4046" in result
+    assert "blocks" in result
+    assert "PROJ-5000" in result
+
+
 def test_jira_dumper_default_filename() -> None:
     from ctxd.dumpers.jira import JiraDumper
 
