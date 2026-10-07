@@ -259,7 +259,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
 | Option | Description |
 |--------|-------------|
-| `-r, --recursive / --no-recursive` | Include child pages (default: off) |
+| `-r, --recursive / --no-recursive` | Include every descendant page, at any depth (default: off). The run summary states the tree size: `page tree: N descendant page(s), max depth D` |
 | `-i, --include-images / --no-include-images` | Download referenced images (default: off) |
 | `--all-attachments` | Download every attachment — images to `images/`, other files (PDF, spreadsheets, …) to `attachments/` (default: off) |
 | `--debug` | Save raw HTML for debugging |
@@ -362,12 +362,13 @@ Key behaviours:
 
 ## Performance
 
-| Scenario | Baseline | Post-opt | Improvement |
-|--------|--------:|--------:|--------:|
-| Slack thread | 9.09s | 1.61s | 82.3% |
-| Confluence single page + image | 1.88s | 1.74s | 7.4% |
-| Confluence recursive + images | 27.13s | 4.04s | 85.1% |
-| GitHub PR | 6.75s | 4.15s | 38.5% |
+Measured results live in [`bench/results/`](bench/results/): one file per run, with the refs measured, each scenario's shape, and median wall time, request count, bytes written and peak memory. To reproduce a run or compare two refs:
+
+```bash
+uv run scripts/bench.py --ref v0.6.0 --ref HEAD
+```
+
+Scenarios are read from `~/.config/ctxd/bench-targets` (format in [`scripts/bench.py`](scripts/bench.py)), so real URLs never enter the repo.
 
 ## License
 

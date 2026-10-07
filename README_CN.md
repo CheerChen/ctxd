@@ -266,7 +266,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
 | 参数 | 说明 |
 |------|------|
-| `-r, --recursive / --no-recursive` | 包含子页面（默认关闭） |
+| `-r, --recursive / --no-recursive` | 包含任意深度的全部子孙页面（默认关闭）。运行摘要会给出页面树规模：`page tree: N descendant page(s), max depth D` |
 | `-i, --include-images / --no-include-images` | 下载正文引用的图片（默认关闭） |
 | `--all-attachments` | 下载全部附件：图片放 `images/`，其他文件（PDF、表格等）放 `attachments/`（默认关闭） |
 | `--debug` | 保存原始 HTML 用于排查 |
@@ -367,14 +367,15 @@ ctxd <url> --recurse-depth 2
 
 ---
 
-## Performance
+## 性能
 
-| 场景 | 优化前 | 优化后 | 提升 |
-|------|------:|------:|------:|
-| Slack thread | 9.09s | 1.61s | 82.3% |
-| Confluence 单页 + 图片 | 1.88s | 1.74s | 7.4% |
-| Confluence 递归 + 图片 | 27.13s | 4.04s | 85.1% |
-| GitHub PR | 6.75s | 4.15s | 38.5% |
+实测结果见 [`bench/results/`](bench/results/)：每次运行一个文件，记录所测的 ref、各场景的形态，以及耗时中位数、请求数、写出字节数与峰值内存。复现某次运行或对比两个 ref：
+
+```bash
+uv run scripts/bench.py --ref v0.6.0 --ref HEAD
+```
+
+场景从 `~/.config/ctxd/bench-targets` 读取（格式见 [`scripts/bench.py`](scripts/bench.py)），真实 URL 不会进入仓库。
 
 ## 许可证
 

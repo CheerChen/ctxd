@@ -143,10 +143,10 @@ class TestConfluenceRecursiveDefault:
 
     def test_readme_says_off(self, readme_text: str) -> None:
         # In the Confluence options table
-        assert "Include child pages (default: off)" in readme_text
+        assert "Include every descendant page, at any depth (default: off)" in readme_text
 
     def test_readme_cn_says_off(self, readme_cn_text: str) -> None:
-        assert "包含子页面（默认关闭）" in readme_cn_text
+        assert "包含任意深度的全部子孙页面（默认关闭）" in readme_cn_text
 
 
 class TestIncludeImagesDefault:
