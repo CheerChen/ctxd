@@ -75,6 +75,9 @@ class ExportResult:
     reason: str = ""
     notes: list[str] = field(default_factory=list)
     truncated: int = 0
+    # Per-page counts the caller folds into one note per run, so a
+    # 200-page tree does not emit 200 near-identical notes.
+    tally: dict[str, int] = field(default_factory=dict)
 
     def to_item(self) -> ItemRecord:
         return ItemRecord(

@@ -8,10 +8,14 @@ from typing import Any, Callable, TypeVar
 
 import requests
 
+from ctxd.concurrency import parallel_map
 from ctxd.http_retry import mount_retry
 from ctxd.profiling import instrument_session
 
 _T = TypeVar("_T")
+
+# Upper bound the descendants endpoint accepts for ``depth``.
+_DESCENDANTS_MAX_DEPTH = 5
 
 
 def _warn(message: str) -> None:
@@ -114,123 +118,85 @@ class ConfluenceClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_descendants(self, page_id: str) -> list[dict[str, Any]]:
-        all_pages: list[dict[str, Any]] = []
-        cursor: str | None = None
+    def _paginate(
+        self, path: str, params: dict[str, Any], missing_ok: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Every result of a v2 collection, following ``_links.next``.
 
-        while True:
-            params = {"limit": 100}
-            if cursor:
-                params["cursor"] = cursor
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/descendants"
-            resp = self.session.get(url, params=params, timeout=30)
-            resp.raise_for_status()
+        ``next`` is a relative path that already carries the cursor
+        (``/wiki/api/v2/...?cursor=...``), so it is requested as-is.
+        With *missing_ok*, a 400/404 on the first request means the
+        collection does not exist and yields ``[]``; an error on a later
+        page always raises, so a broken cursor cannot pass for "no more".
+        """
+        results: list[dict[str, Any]] = []
+        url: str | None = f"{self.base_url}{path}"
+        query: dict[str, Any] | None = params
+        while url:
+            resp = self.session.get(url, params=query, timeout=30)
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError:
+                if missing_ok and query is not None and resp.status_code in (400, 404):
+                    return []
+                raise
             data = resp.json()
-            all_pages.extend(data.get("results", []))
-            cursor = data.get("_links", {}).get("next")
-            if not cursor:
-                break
-        return all_pages
+            results.extend(data.get("results", []))
+            next_path = data.get("_links", {}).get("next")
+            url = f"{self.base_url}{next_path}" if next_path else None
+            query = None
+        return results
+
+    def get_descendants(self, page_id: str) -> list[dict[str, Any]]:
+        """Every descendant page, however deep.
+
+        The endpoint defaults to depth 2 and caps ``depth`` at 5, so pages
+        found at the cap are queried again as new roots.  ``depth`` on the
+        returned pages is rewritten to be relative to *page_id*.
+        """
+        pages: list[dict[str, Any]] = []
+        frontier: list[tuple[str, int]] = [(page_id, 0)]
+        while frontier:
+            batches = parallel_map(
+                lambda root: self._paginate(
+                    f"/wiki/api/v2/pages/{root[0]}/descendants",
+                    {"limit": 250, "depth": _DESCENDANTS_MAX_DEPTH},
+                ),
+                frontier,
+            )
+            next_frontier: list[tuple[str, int]] = []
+            for (_, offset), batch in zip(frontier, batches):
+                for page in batch:
+                    relative = int(page.get("depth") or 0)
+                    page["depth"] = offset + relative
+                    pages.append(page)
+                    if relative == _DESCENDANTS_MAX_DEPTH and page.get("type", "page") == "page":
+                        next_frontier.append((str(page["id"]), page["depth"]))
+            frontier = next_frontier
+        return pages
 
     def get_attachments(self, page_id: str) -> list[dict[str, Any]]:
-        all_attachments: list[dict[str, Any]] = []
-        cursor: str | None = None
-
-        while True:
-            params = {"limit": 100}
-            if cursor:
-                params["cursor"] = cursor
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/attachments"
-            try:
-                resp = self.session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-            except requests.exceptions.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code in (400, 404):
-                    break
-                raise
-
-            all_attachments.extend(data.get("results", []))
-            cursor = data.get("_links", {}).get("next")
-            if not cursor:
-                break
-
-        return all_attachments
+        return self._paginate(
+            f"/wiki/api/v2/pages/{page_id}/attachments", {"limit": 100}, missing_ok=True,
+        )
 
     def get_inline_comments(self, page_id: str) -> list[dict[str, Any]]:
-        all_comments: list[dict[str, Any]] = []
-        cursor: str | None = None
-
-        while True:
-            params: dict[str, Any] = {"limit": 100, "body-format": "storage"}
-            if cursor:
-                params["cursor"] = cursor
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/inline-comments"
-            try:
-                resp = self.session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-            except requests.exceptions.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code in (400, 404):
-                    break
-                raise
-
-            all_comments.extend(data.get("results", []))
-            cursor = data.get("_links", {}).get("next")
-            if not cursor:
-                break
-
-        return all_comments
+        return self._paginate(
+            f"/wiki/api/v2/pages/{page_id}/inline-comments",
+            {"limit": 100, "body-format": "storage"}, missing_ok=True,
+        )
 
     def get_footer_comments(self, page_id: str) -> list[dict[str, Any]]:
-        all_comments: list[dict[str, Any]] = []
-        cursor: str | None = None
-
-        while True:
-            params: dict[str, Any] = {"limit": 100, "body-format": "storage"}
-            if cursor:
-                params["cursor"] = cursor
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/footer-comments"
-            try:
-                resp = self.session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-            except requests.exceptions.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code in (400, 404):
-                    break
-                raise
-
-            all_comments.extend(data.get("results", []))
-            cursor = data.get("_links", {}).get("next")
-            if not cursor:
-                break
-
-        return all_comments
+        return self._paginate(
+            f"/wiki/api/v2/pages/{page_id}/footer-comments",
+            {"limit": 100, "body-format": "storage"}, missing_ok=True,
+        )
 
     def get_comment_children(self, comment_id: str, comment_type: str = "footer") -> list[dict[str, Any]]:
-        all_children: list[dict[str, Any]] = []
-        cursor: str | None = None
-
-        while True:
-            params: dict[str, Any] = {"limit": 100, "body-format": "storage"}
-            if cursor:
-                params["cursor"] = cursor
-            url = f"{self.base_url}/wiki/api/v2/{comment_type}-comments/{comment_id}/children"
-            try:
-                resp = self.session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-            except requests.exceptions.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code in (400, 404):
-                    break
-                raise
-
-            all_children.extend(data.get("results", []))
-            cursor = data.get("_links", {}).get("next")
-            if not cursor:
-                break
-
-        return all_children
+        return self._paginate(
+            f"/wiki/api/v2/{comment_type}-comments/{comment_id}/children",
+            {"limit": 100, "body-format": "storage"}, missing_ok=True,
+        )
 
     def download_attachment(
         self, attachment_id: str, page_id: str, max_bytes: int | None = None

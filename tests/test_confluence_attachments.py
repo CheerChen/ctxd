@@ -112,7 +112,7 @@ def test_attachments_listed_without_any_flag(tmp_path: Path) -> None:
     assert not (page_dir / "attachments").exists()
     assert "## Attachments" in readme
     assert f"[Report — final.pdf](<{_PDF_URL}>) — application/pdf, 4.0 MiB" in readme
-    assert any("--all-attachments" in note for note in result.notes)
+    assert result.tally == {"attachments_remote": 1}
 
 
 def test_images_flag_alone_does_not_download_pdf(tmp_path: Path) -> None:
@@ -122,7 +122,7 @@ def test_images_flag_alone_does_not_download_pdf(tmp_path: Path) -> None:
 
     assert client.downloaded == ["att2"]
     assert not (page_dir / "attachments").exists()
-    assert any("1 attachment(s) not downloaded" in note for note in result.notes)
+    assert result.tally == {"attachments_remote": 1}
 
 
 def test_failed_download_keeps_remote_link_and_notes_it(tmp_path: Path) -> None:
@@ -192,3 +192,22 @@ def test_entity_escaped_image_resolves_to_downloaded_copy() -> None:
     markdown, _, _ = html_to_markdown(html, image_map={"a & b.png": "local/copy.png"})
 
     assert "local/copy.png" in markdown
+
+
+def test_tree_export_folds_per_page_counts_into_one_note(tmp_path: Path) -> None:
+    from ctxd.summary import ExportResult, PageStatus, Summary
+
+    dumper = _dumper(tmp_path, _FakeClient([]))
+    dumper.summary = Summary(source="confluence")
+    results = [
+        ExportResult(status=PageStatus.WRITTEN, tally={"images_remote": 2, "attachments_remote": 3}),
+        ExportResult(status=PageStatus.WRITTEN, tally={"attachments_remote": 4}),
+        ExportResult(status=PageStatus.WRITTEN),
+    ]
+
+    dumper._add_tally_notes(results)
+
+    assert dumper.summary.notes == [
+        "2 image(s) on 1 page(s) not downloaded (use -i); links point at the Confluence download URL",
+        "7 attachment(s) on 2 page(s) not downloaded (use --all-attachments with -o/-O)",
+    ]

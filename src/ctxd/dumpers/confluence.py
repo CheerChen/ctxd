@@ -96,6 +96,11 @@ class ConfluenceDumper(BaseDumper):
             with timed("confluence.get_descendants"):
                 descendants = self.client.get_descendants(page_id)
             pages = [root_page] + descendants
+            max_depth = max((int(p.get("depth") or 0) for p in descendants), default=0)
+            # Stated so a short tree is checkable against the Confluence UI.
+            self.summary.add_note(
+                f"page tree: {len(descendants)} descendant page(s), max depth {max_depth}"
+            )
         else:
             pages = [root_page]
 
@@ -179,6 +184,7 @@ class ConfluenceDumper(BaseDumper):
         # Workers return ExportResult objects; they do NOT mutate self.summary.
         for result in results:
             self.summary.add_export_result(result)
+        self._add_tally_notes(results)
         self.summary.resources_fetched = len(raw["pages"])
         self.summary.artifacts_written = self.summary.resources_rendered
 
@@ -190,6 +196,19 @@ class ConfluenceDumper(BaseDumper):
         self.log(f"📁 Output: {output_path}")
 
         self._emit_and_manifest()
+
+    _TALLY_NOTES = {
+        "images_remote": "image(s) on {pages} page(s) not downloaded (use -i); "
+                         "links point at the Confluence download URL",
+        "attachments_remote": "attachment(s) on {pages} page(s) not downloaded "
+                              "(use --all-attachments with -o/-O)",
+    }
+
+    def _add_tally_notes(self, results: list[ExportResult]) -> None:
+        for key, template in self._TALLY_NOTES.items():
+            counts = [r.tally[key] for r in results if r.tally.get(key)]
+            if counts:
+                self.summary.add_note(f"{sum(counts)} " + template.format(pages=len(counts)))
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -242,6 +261,7 @@ class ConfluenceDumper(BaseDumper):
 
             image_map: dict[str, str] = {}
             file_map: dict[str, str] = {}
+            tally: dict[str, int] = {}
             with timed("stage.attachments"):
                 # Fetched once per page and shared by the downloaders, the
                 # fallback-URL builder and the attachment list, so every
@@ -271,7 +291,7 @@ class ConfluenceDumper(BaseDumper):
             metadata_block = self._build_metadata_block(page_data, notes_out=worker_notes)
             fallback_urls = self._image_fallback_urls(
                 page_id, html_content, image_map=image_map,
-                notes_out=worker_notes, attachments=attachments_meta,
+                notes_out=worker_notes, attachments=attachments_meta, tally=tally,
             )
             with timed("stage.transform"):
                 markdown, _, marker_line_map = html_to_markdown(
@@ -282,7 +302,7 @@ class ConfluenceDumper(BaseDumper):
             marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
             markdown = f"# {title}\n\n{metadata_block}{markdown}"
             markdown += self._attachments_section(
-                attachments_meta, {**image_map, **file_map}, worker_notes,
+                attachments_meta, {**image_map, **file_map}, worker_notes, tally=tally,
             )
 
             with timed("stage.comments"):
@@ -308,7 +328,7 @@ class ConfluenceDumper(BaseDumper):
             self.log(f"  ✓ Saved: {page_dir / 'README.md'}")
             return ExportResult(
                 status=PageStatus.WRITTEN, page_id=page_id, title=title,
-                notes=worker_notes, truncated=worker_truncated,
+                notes=worker_notes, truncated=worker_truncated, tally=tally,
             )
         except Exception as exc:
             self.warn(f"  ✗ Failed to export page {page_id}: {exc}")
@@ -335,6 +355,7 @@ class ConfluenceDumper(BaseDumper):
         image_map: dict[str, str],
         notes_out: list[str] | None = None,
         attachments: list[dict] | None = None,
+        tally: dict[str, int] | None = None,
     ) -> dict[str, str]:
         """Remote download URLs for images that were not saved locally.
 
@@ -355,12 +376,15 @@ class ConfluenceDumper(BaseDumper):
         urls = build_attachment_urls(self.client.base_url if self.client else "", attachments)
 
         missing = [name for name in referenced if name not in image_map]
-        if missing and notes_out is not None:
-            unreachable = [name for name in missing if name not in urls]
+        if missing and tally is not None:
+            tally["images_remote"] = tally.get("images_remote", 0) + len(missing)
+        elif missing and notes_out is not None:
             notes_out.append(
                 f"{len(missing)} image(s) not downloaded (use -i); "
                 f"links point at the Confluence download URL"
             )
+        if missing and notes_out is not None:
+            unreachable = [name for name in missing if name not in urls]
             if unreachable:
                 notes_out.append(
                     f"{len(unreachable)} image(s) have no attachment URL: "
@@ -581,6 +605,7 @@ class ConfluenceDumper(BaseDumper):
 
     def _attachments_section(
         self, attachments: list[dict], local_paths: dict[str, str], notes_out: list[str],
+        tally: dict[str, int] | None = None,
     ) -> str:
         """Markdown list of every attachment, linking the local copy when one
         was saved and the remote download URL otherwise."""
@@ -602,7 +627,9 @@ class ConfluenceDumper(BaseDumper):
             )
             lines.append(f"- {link} — {meta}")
         # Failed downloads were already noted one by one.
-        if not_downloaded and not self.all_attachments:
+        if not_downloaded and not self.all_attachments and tally is not None:
+            tally["attachments_remote"] = tally.get("attachments_remote", 0) + not_downloaded
+        elif not_downloaded and not self.all_attachments:
             notes_out.append(
                 f"{not_downloaded} attachment(s) not downloaded "
                 f"(use --all-attachments with -o/-O)"
