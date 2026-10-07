@@ -15,6 +15,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ctxd.attachments import sanitize_attachment_name
+
+
 # Attachment URL forms seen in rendered Jira HTML / Markdown.
 # The API version varies (2 or 3); a thumbnail carries the same id as the
 # full-size file, so both resolve to the same downloaded copy.
@@ -45,12 +48,6 @@ class JiraAttachment:
         issue has several attachments sharing the same filename."""
         return f"{self.id}-{sanitize_attachment_name(self.filename)}"
 
-
-def sanitize_attachment_name(name: str) -> str:
-    sanitized = re.sub(r'[<>:"|?*\\/]', "", name)
-    sanitized = re.sub(r"[\x00-\x1f]", "", sanitized)
-    sanitized = re.sub(r"\s+", " ", sanitized).strip()
-    return sanitized or "attachment"
 
 
 def parse_attachments(fields: dict) -> list[JiraAttachment]:
@@ -115,11 +112,3 @@ def rewrite_attachment_links(content: str, local_paths: dict[str, str]) -> str:
         return local_paths.get(match.group("id"), match.group(0))
 
     return _ATTACHMENT_URL_RE.sub(_replace, content)
-
-
-def format_size(num_bytes: int) -> str:
-    if num_bytes < 1024:
-        return f"{num_bytes} B"
-    if num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024:.1f} KiB"
-    return f"{num_bytes / (1024 * 1024):.1f} MiB"

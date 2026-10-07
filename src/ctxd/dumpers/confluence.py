@@ -7,9 +7,14 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from ctxd.attachments import format_size, sanitize_attachment_name
 from ctxd.auth import ensure_confluence_auth
 from ctxd.concurrency import parallel_map
-from ctxd.confluence.api_client import ConfluenceClient, build_attachment_urls
+from ctxd.confluence.api_client import (
+    ConfluenceClient,
+    attachment_download_url,
+    build_attachment_urls,
+)
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, parse_short_link
 from ctxd.dumpers.base import BaseDumper
@@ -110,8 +115,10 @@ class ConfluenceDumper(BaseDumper):
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
         metadata_block = self._build_metadata_block(page, notes_out=self.summary.notes)
+        attachments_meta = self._page_attachments(page_id, self.summary.notes)
         fallback_urls = self._image_fallback_urls(
             page_id, html_content or "", image_map={}, notes_out=self.summary.notes,
+            attachments=attachments_meta,
         )
         markdown, _, marker_line_map = html_to_markdown(
             html_content or "", image_map={}, base_url=self.client.base_url,
@@ -121,6 +128,7 @@ class ConfluenceDumper(BaseDumper):
         offset = 2 + metadata_block.count("\n")
         marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
         result = f"# {title}\n\n{metadata_block}{markdown}"
+        result += self._attachments_section(attachments_meta, {}, self.summary.notes)
 
         comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
         if comments_md:
@@ -233,12 +241,13 @@ class ConfluenceDumper(BaseDumper):
                 _atomic_write_text(raw_path, html_content)
 
             image_map: dict[str, str] = {}
-            attachments_meta: list[dict] | None = None
-            if self.include_images:
-                with timed("stage.attachments"):
-                    # Fetched once and shared with the fallback-URL builder
-                    # so an -i run makes no extra attachments call.
-                    attachments_meta = self._page_attachments(page_id, worker_notes)
+            file_map: dict[str, str] = {}
+            with timed("stage.attachments"):
+                # Fetched once per page and shared by the downloaders, the
+                # fallback-URL builder and the attachment list, so every
+                # attachment is at least named in the output.
+                attachments_meta = self._page_attachments(page_id, worker_notes)
+                if self.include_images or self.all_attachments:
                     image_map = self._download_page_images(
                         page_id=page_id,
                         page_html=html_content,
@@ -248,6 +257,14 @@ class ConfluenceDumper(BaseDumper):
                         notes_out=worker_notes,
                         run_budget=run_budget,
                         attachments=attachments_meta,
+                    )
+                if self.all_attachments:
+                    file_map = self._download_page_files(
+                        page_id=page_id,
+                        page_dir=page_dir,
+                        attachments=attachments_meta,
+                        notes_out=worker_notes,
+                        run_budget=run_budget,
                     )
 
             base_url = self.client.base_url if self.client else None
@@ -264,6 +281,9 @@ class ConfluenceDumper(BaseDumper):
             offset = 2 + metadata_block.count("\n")
             marker_line_map = {ref: line + offset for ref, line in marker_line_map.items()}
             markdown = f"# {title}\n\n{metadata_block}{markdown}"
+            markdown += self._attachments_section(
+                attachments_meta, {**image_map, **file_map}, worker_notes,
+            )
 
             with timed("stage.comments"):
                 comments_md = self._fetch_and_format_comments(
@@ -324,7 +344,9 @@ class ConfluenceDumper(BaseDumper):
         no way to reach the file.  Costs one extra API call, and only for
         pages that actually embed images.
         """
-        referenced = extract_confluence_images(html)
+        # A view-file macro references a PDF the same way an image is; those
+        # are covered by the attachment list, not by the image notes.
+        referenced = [name for name in extract_confluence_images(html) if self._is_image_file(name)]
         if not referenced:
             return {}
 
@@ -491,6 +513,101 @@ class ConfluenceDumper(BaseDumper):
             _note(f"attachments processing failed (page {page_id}): {exc}")
 
         return image_map
+
+    def _download_page_files(
+        self,
+        page_id: str,
+        page_dir: Path,
+        attachments: list[dict],
+        notes_out: list[str],
+        run_budget=None,
+    ) -> dict[str, str]:
+        """Download every non-image attachment into ``attachments/``.
+
+        Images stay with :meth:`_download_page_images` so body image links
+        keep resolving to ``images/``.  Returns ``{title: relative_path}``.
+        """
+        if self.client is None:
+            raise RuntimeError("Confluence client not initialized")
+
+        targets: list[tuple[dict, str]] = []
+        used_names: set[str] = set()
+        for attachment in attachments:
+            title = attachment.get("title", "")
+            if not title or self._is_image_file(title):
+                continue
+            if not attachment.get("id"):
+                self.warn(f"    ⚠ Skipping {title}: no id in attachment metadata")
+                notes_out.append(f"attachment skipped (no id): {title}")
+                continue
+            name = sanitize_attachment_name(title)
+            if name in used_names:
+                # Titles are unique per page, but sanitising can merge two.
+                name = f"{attachment['id']}-{name}"
+            used_names.add(name)
+            targets.append((attachment, name))
+
+        client = self.client
+        file_dir = page_dir / "attachments"
+
+        def download_one(target: tuple[dict, str]) -> tuple[dict, str, str | None]:
+            attachment, name = target
+            try:
+                content = client.download_attachment(
+                    attachment_id=attachment["id"],
+                    page_id=attachment.get("pageId") or page_id,
+                    max_bytes=self.max_file_size,
+                )
+                if run_budget is not None:
+                    run_budget.check_and_reserve(len(content))
+                from ctxd.dumpers.base import _atomic_write_bytes
+                _atomic_write_bytes(file_dir / name, content)
+            except Exception as exc:
+                return attachment, name, str(exc)
+            return attachment, name, None
+
+        file_map: dict[str, str] = {}
+        for attachment, name, error in parallel_map(download_one, targets):
+            title = attachment["title"]
+            if error is not None:
+                self.warn(f"    ⚠ Failed to download {title}: {error}")
+                notes_out.append(f"attachment download failed: {title} ({error})")
+                continue
+            file_map[title] = f"attachments/{name}"
+
+        if file_map:
+            self.log(f"    ✓ Downloaded {len(file_map)} attachment(s)")
+        return file_map
+
+    def _attachments_section(
+        self, attachments: list[dict], local_paths: dict[str, str], notes_out: list[str],
+    ) -> str:
+        """Markdown list of every attachment, linking the local copy when one
+        was saved and the remote download URL otherwise."""
+        if not attachments:
+            return ""
+        base_url = self.client.base_url if self.client else ""
+        lines = ["", "", "## Attachments", ""]
+        not_downloaded = 0
+        for attachment in sorted(attachments, key=lambda a: a.get("title", "")):
+            title = attachment.get("title", "") or attachment.get("id", "attachment")
+            target = local_paths.get(title) or attachment_download_url(base_url, attachment)
+            if title not in local_paths:
+                not_downloaded += 1
+            label = title.replace("[", "\\[").replace("]", "\\]")
+            link = f"[{label}](<{target}>)" if target else label
+            meta = (
+                f"{attachment.get('mediaType') or 'unknown'}, "
+                f"{format_size(int(attachment.get('fileSize') or 0))}"
+            )
+            lines.append(f"- {link} — {meta}")
+        # Failed downloads were already noted one by one.
+        if not_downloaded and not self.all_attachments:
+            notes_out.append(
+                f"{not_downloaded} attachment(s) not downloaded "
+                f"(use --all-attachments with -o/-O)"
+            )
+        return "\n".join(lines)
 
     @staticmethod
     def _is_image_file(filename: str) -> bool:

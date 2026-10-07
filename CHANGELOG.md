@@ -4,6 +4,15 @@
 
 ### Fixed
 * **Jira issue links always printed the outward label** : every entry in `issuelinks` was rendered with `type.outward` (e.g. "blocks") no matter which end of the link the linked issue sat on, so an issue that *is blocked by* another exported as `blocks KEY` — the relationship stated backwards. The label now follows the direction field: `outwardIssue` → `type.outward`, `inwardIssue` → `type.inward`, via a shared `_issue_link_parts` helper used by both the markdown and text formats.
+* **Confluence `--all-attachments` downloads non-image files** : the flag did nothing unless `-i` was also passed, because attachment handling sat behind the `-i` branch; with `-i` it still kept only image extensions. A page whose real content was an attached PDF or spreadsheet exported with no file and no warning. `--all-attachments` now works on its own: images still land in `images/` (so body image links are unchanged), every other attachment lands in `attachments/` under its sanitised title, with an id prefix only if sanitising makes two titles collide. Downloads enforce `--max-file-size` / `--max-run-size`; a failed one warns, is noted in the summary, and keeps its remote link.
+* **Entity-escaped attachment filenames** : storage format escapes attribute values (`&mdash;`, `&amp;`) while attachment titles from the API are plain text, so such a file never matched — a downloaded image kept a dead link, and an embedded PDF was reported as an image with "no attachment URL". Filenames are now unescaped where they are extracted and resolved.
+* **Non-image embeds no longer counted as images** : a `view-file` macro references a PDF the same way an image is referenced, which produced "image(s) not downloaded (use -i)" for a file `-i` can never fetch. The image notes now count image files only.
+
+### Added
+* **Confluence `Attachments` section** : every page export — directory or stdout — ends with a list of the page's attachments with filename, MIME type and size, linking the local copy or the REST download URL, matching what Jira exports already did. When attachments exist and `--all-attachments` was not passed, the summary says how many were not downloaded. This costs one attachments call per page, which `-i` runs and image-bearing pages already paid.
+
+### Changed
+* **Shared attachment helpers** : `sanitize_attachment_name` and `format_size` moved from `ctxd.jira.attachments` to `ctxd.attachments`, used by both the Jira and Confluence dumpers.
 
 ## [0.6.0]
 

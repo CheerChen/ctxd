@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import re
 from typing import Callable, List, Tuple
 from urllib.parse import quote
@@ -33,7 +34,9 @@ def extract_confluence_images(html: str) -> List[str]:
         if name_match:
             filenames.append(name_match.group(1))
 
-    return list(set(filenames))
+    # Storage format entity-escapes attribute values (``&mdash;``), while
+    # attachment titles from the API are plain text.
+    return list({html_lib.unescape(name) for name in filenames})
 
 
 def convert_code_macros(html: str) -> str:
@@ -69,6 +72,9 @@ def resolve_image_src(
     is the last resort — it only resolves for a directory export run with
     ``-i``, so callers should supply *fallback_urls* whenever they can.
     """
+    # *filename* comes from storage-format markup (``&mdash;``); the map
+    # keys are attachment titles in plain text.
+    filename = html_lib.unescape(filename)
     local = image_map.get(filename)
     if local:
         return local

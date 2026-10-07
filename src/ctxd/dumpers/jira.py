@@ -6,13 +6,13 @@ from pathlib import Path
 
 import markdownify
 
+from ctxd.attachments import format_size
 from ctxd.auth import ensure_jira_auth
 from ctxd.concurrency import parallel_map
 from ctxd.dumpers.base import BaseDumper
 from ctxd.jira.api_client import JiraClient
 from ctxd.jira.attachments import (
     JiraAttachment,
-    format_size,
     parse_attachments,
     referenced_ids,
     rewrite_attachment_links,

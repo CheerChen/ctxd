@@ -268,10 +268,12 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 |------|------|
 | `-r, --recursive / --no-recursive` | 包含子页面（默认关闭） |
 | `-i, --include-images / --no-include-images` | 下载正文引用的图片（默认关闭） |
-| `--all-attachments` | 下载所有附件（默认仅下载正文引用的图片） |
+| `--all-attachments` | 下载全部附件：图片放 `images/`，其他文件（PDF、表格等）放 `attachments/`（默认关闭） |
 | `--debug` | 保存原始 HTML 用于排查 |
 
 没有下载的图片不会被丢弃：链接指向该附件的 REST 下载地址，用同一个 API token 就能取（`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`），且不含会过期的 token。运行摘要会说明有多少张图保持为远程链接。
+
+每个页面导出末尾都有一个 `Attachments` 段落，列出每个附件的文件名、MIME 类型与体积；已下载的链到本地副本，否则链到 REST 下载地址。因此只挂在页面上、正文没有引用的文件也不会被隐藏，运行摘要会说明有几个没有下载。
 
 ---
 

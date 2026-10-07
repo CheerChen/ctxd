@@ -261,10 +261,12 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 |--------|-------------|
 | `-r, --recursive / --no-recursive` | Include child pages (default: off) |
 | `-i, --include-images / --no-include-images` | Download referenced images (default: off) |
-| `--all-attachments` | Download all attachments (default: only referenced images) |
+| `--all-attachments` | Download every attachment — images to `images/`, other files (PDF, spreadsheets, …) to `attachments/` (default: off) |
 | `--debug` | Save raw HTML for debugging |
 
 Images that are not downloaded are not dropped: they link to the attachment's REST download URL, which works with the same API token (`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`) and embeds no expiring token. The run summary reports how many images were left remote.
+
+Every page export ends with an `Attachments` section listing each attachment with filename, MIME type and size, linking the local copy when it was saved and the REST download URL otherwise. A file that is attached but never embedded in the body is therefore still visible, and the run summary says how many were not downloaded.
 
 ---
 

@@ -79,6 +79,12 @@ body links rewritten to point at them:
 ctxd '<jira-url>' --all-attachments -O
 ```
 
+Confluence page with every attachment (PDF, xlsx, …) saved next to it:
+
+```bash
+ctxd '<confluence-url>' --all-attachments -O
+```
+
 Attachments are never downloaded by default. When an issue or page has
 attachments that were skipped, the run summary says so — read it before
 concluding that content is missing.
