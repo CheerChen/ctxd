@@ -60,6 +60,13 @@ Do not add `-q`: when stderr is not a TTY — which is the case whenever an agen
 captures the output — `ctxd` silences progress logs on its own. Warnings and the
 completeness summary still print, and you should read them.
 
+GitHub PRs default to `-d compact` — file names and hunk ranges, no code. To
+review or explain the changes themselves, ask for the full diff:
+
+```bash
+ctxd '<github-pr-url>' -f text -d full
+```
+
 Enable recursion to auto-expand supported URLs found in the output:
 
 ```bash

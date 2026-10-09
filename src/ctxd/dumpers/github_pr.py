@@ -76,6 +76,8 @@ class GitHubPRDumper(BaseDumper):
             sub_notes.append(f"{len(reviews)} reviews")
         if diff_content == self._NO_DIFF:
             sub_notes.append("diff: no differences or fetch error")
+        elif self.diff_mode != "full":
+            sub_notes.append(f"diff mode {self.diff_mode}: no code in output (pass -d full)")
         for n in sub_notes:
             self.summary.add_note(n)
 
@@ -131,10 +133,12 @@ class GitHubPRDumper(BaseDumper):
                         lines.append(f"  {body_line}")
                     lines.append("")
 
+            notice = self._DIFF_MODE_NOTICE.get(self.diff_mode) if raw["diff_content"] != self._NO_DIFF else None
+            lines.extend(["## Git Diff", ""])
+            if notice:
+                lines.extend([notice, ""])
             lines.extend([
-                "## Git Diff",
-                "",
-                "```diff",
+                "```diff" if self.diff_mode == "full" else "```text",
                 raw["diff_content"],
                 "```",
                 "",
@@ -178,7 +182,11 @@ class GitHubPRDumper(BaseDumper):
                     lines.append(f"  {body_line}")
             lines.append("")
 
-        lines.extend(["--- GIT DIFF ---", raw["diff_content"], ""])
+        lines.append("--- GIT DIFF ---")
+        notice = self._DIFF_MODE_NOTICE.get(self.diff_mode) if raw["diff_content"] != self._NO_DIFF else None
+        if notice:
+            lines.append(notice)
+        lines.extend([raw["diff_content"], ""])
         return "\n".join(lines)
 
     @staticmethod
@@ -302,6 +310,15 @@ class GitHubPRDumper(BaseDumper):
         return result
 
     _NO_DIFF = "[No differences found or error generating diff]"
+
+    # compact / stat carry no code. Said in-band, because an agent reviewing
+    # the PR otherwise cannot tell that the changes themselves are missing.
+    _DIFF_MODE_NOTICE = {
+        "compact": "Diff mode: compact — file names and hunk ranges only, no code. "
+                   "Re-run with `-d full` for the code.",
+        "stat": "Diff mode: stat — changed files and line counts only, no code. "
+                "Re-run with `-d full` for the code.",
+    }
 
     def _generate_diff(self) -> str:
         if self.diff_mode == "stat":

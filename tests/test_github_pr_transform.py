@@ -144,3 +144,36 @@ def test_text_format_uses_separator_headers() -> None:
     assert "--- REVIEWS ---" in out
     assert "--- TIMELINE COMMENTS ---" in out
     assert out.index("--- REVIEWS ---") < out.index("--- TIMELINE COMMENTS ---")
+
+
+import pytest
+
+
+@pytest.mark.parametrize("mode", ["compact", "stat"])
+@pytest.mark.parametrize("fmt", ["md", "text"])
+def test_non_full_diff_says_it_has_no_code(mode: str, fmt: str) -> None:
+    """compact / stat carry no code; the output must say so in-band, since an
+    agent reviewing the PR otherwise cannot tell it is missing anything."""
+    dumper = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt=fmt, diff_mode=mode)
+
+    out = dumper.transform(_make_raw(diff_content="src/a.py\n  @@ hunk 1 @@"))
+
+    assert "no code" in out and "-d full" in out
+    assert "```diff" not in out
+
+
+def test_full_diff_has_no_notice_and_keeps_diff_fence() -> None:
+    dumper = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md", diff_mode="full")
+
+    out = dumper.transform(_make_raw(diff_content="diff --git a/x b/x\n+y"))
+
+    assert "-d full" not in out
+    assert "```diff\ndiff --git a/x b/x" in out
+
+
+def test_no_notice_when_there_is_no_diff() -> None:
+    dumper = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md", diff_mode="compact")
+
+    out = dumper.transform(_make_raw(diff_content=GitHubPRDumper._NO_DIFF))
+
+    assert "-d full" not in out

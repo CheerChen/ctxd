@@ -162,7 +162,7 @@ ctxd -O https://github.com/owner/repo/pull/123
 
 | 参数 | 说明 |
 |------|------|
-| `-d, --diff-mode full\|compact\|stat` | Diff 输出模式（默认 `compact`） |
+| `-d, --diff-mode full\|compact\|stat` | Diff 输出模式（默认 `compact`）。`compact` 列出文件与 hunk 行号范围，`stat` 列出文件与增删行数——两者都不含代码，输出中会注明；要审查改动内容请用 `full` |
 | `--clean-body / --no-clean-body` | 清理 PR body 中的 bot HTML 噪音（默认开启） |
 | `--no-bots` | 过滤 bot 作者的评审和评论（默认全部保留） |
 

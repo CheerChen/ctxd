@@ -155,7 +155,7 @@ ctxd -O https://github.com/owner/repo/pull/123
 
 | Option | Description |
 |--------|-------------|
-| `-d, --diff-mode full\|compact\|stat` | Diff output mode (default: `compact`) |
+| `-d, --diff-mode full\|compact\|stat` | Diff output mode (default: `compact`). `compact` lists files and hunk ranges and `stat` lists files and line counts — neither includes code, and the output says so; use `full` to review the changes |
 | `--clean-body / --no-clean-body` | Strip bot-injected HTML noise from PR body (default: on) |
 | `--no-bots` | Drop bot-authored reviews and comments (default: keep all bots) |
 
