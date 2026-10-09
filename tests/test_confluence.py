@@ -227,3 +227,64 @@ def test_resolve_short_link_noop_for_long_url() -> None:
         dumper._resolve_short_link()
     mock_get.assert_not_called()
     assert dumper.url == long_url
+
+
+def test_single_page_transform_fetches_independent_parts_concurrently() -> None:
+    """Space, author, attachments and both comment kinds are one concurrent
+    batch; comment authors are resolved in a second batch before rendering."""
+    import threading
+
+    from ctxd.dumpers.confluence import ConfluenceDumper
+
+    barrier = threading.Barrier(5, timeout=2)
+    calls: list[str] = []
+
+    class _Client:
+        base_url = "https://example.atlassian.net"
+
+        def _hit(self, name):
+            # Name lookups are cached like the real client; only the first
+            # call of each kind joins the barrier.
+            if name in calls:
+                return
+            calls.append(name)
+            barrier.wait()
+
+        def get_space_name(self, space_id):
+            self._hit("space")
+            return "Test Space"
+
+        def get_user_display_name(self, account_id):
+            if account_id == "acc-author":
+                self._hit("author")
+                return "Test Author"
+            calls.append(f"user:{account_id}")
+            return f"name-{account_id}"
+
+        def get_attachments(self, page_id):
+            self._hit("attachments")
+            return []
+
+        def get_inline_comments(self, page_id):
+            self._hit("inline")
+            return []
+
+        def get_footer_comments(self, page_id):
+            self._hit("footer")
+            return [{"id": "c1", "version": {"authorId": "acc-commenter"}, "body": {"storage": {"value": "<p>hi</p>"}}}]
+
+        def get_comment_children(self, comment_id, comment_type="footer"):
+            return []
+
+    dumper = ConfluenceDumper(
+        url="https://example.atlassian.net/wiki/spaces/TEST/pages/123/Example",
+        output=None, fmt="md", quiet=True,
+    )
+    dumper.client = _Client()
+
+    result = dumper.transform({"page_id": "123", "pages": [_make_page()]})
+
+    assert "| **Space** | Test Space |" in result
+    assert "| **Author** | Test Author |" in result
+    assert "name-acc-commenter" in result
+    assert set(calls[:5]) == {"space", "author", "attachments", "inline", "footer"}

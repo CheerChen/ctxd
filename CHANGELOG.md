@@ -7,6 +7,7 @@
 
 ### Changed
 * **Slack user lookups run concurrently** : each participant and each `<@U…>` mention was resolved with its own `users.info` call, one round trip at a time, during rendering. `fetch` now resolves every author, every mentioned user and the channel name in one concurrent batch, and rendering reads the cache. Output is byte-identical; on real threads wall time dropped from 1.70 s to 0.84 s (29 replies) and from 1.53 s to 0.83 s (112 replies).
+* **Confluence single-page export fetches in parallel** : a page to stdout made its requests one after another — space name, page author, attachments, inline comments, footer comments, then each comment author during rendering — so 0.6.1's new attachments call added straight to wall time (+0.2 s in the baseline). Those five independent calls now go out as one batch and comment authors as a second, both through the existing client caches. Output is byte-identical; measured on real pages 1.05 s → 0.56 s without comments and 1.6 s → 0.96 s with inline comments. Tree exports keep the serial per-page path, since pages already run in parallel and nesting would multiply `--max-concurrency`.
 
 ## [0.6.1]
 

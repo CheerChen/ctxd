@@ -119,8 +119,9 @@ class ConfluenceDumper(BaseDumper):
             page = self.client.get_page(page_id)
             html_content = page.get("body", {}).get("storage", {}).get("value", "")
 
-        metadata_block = self._build_metadata_block(page, notes_out=self.summary.notes)
-        attachments_meta = self._page_attachments(page_id, self.summary.notes)
+        notes = self.summary.notes
+        attachments_meta, inline_comments, footer_comments = self._prefetch_page(page, page_id, notes)
+        metadata_block = self._build_metadata_block(page, notes_out=notes)
         fallback_urls = self._image_fallback_urls(
             page_id, html_content or "", image_map={}, notes_out=self.summary.notes,
             attachments=attachments_meta,
@@ -135,11 +136,40 @@ class ConfluenceDumper(BaseDumper):
         result = f"# {title}\n\n{metadata_block}{markdown}"
         result += self._attachments_section(attachments_meta, {}, self.summary.notes)
 
-        comments_md = self._fetch_and_format_comments(page_id, marker_line_map=marker_line_map)
+        comments_md = self._format_comments(
+            page_id, inline_comments, footer_comments, marker_line_map=marker_line_map, notes_out=notes,
+        )
         if comments_md:
             result += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
         return result
+
+    def _prefetch_page(
+        self, page: dict, page_id: str, notes_out: list[str],
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Fetch everything a single-page render needs, concurrently.
+
+        Space name, page author, attachments and both comment kinds do not
+        depend on each other, so they go out as one batch; comment authors
+        are only known once comments arrive and form a second batch.  The
+        name lookups land in the client caches that rendering reads.
+        Tree exports keep the per-page serial path: pages already run in
+        parallel there, and nesting would multiply --max-concurrency.
+        """
+        client = self.client
+        assert client is not None
+        batch = [
+            lambda: self._page_attachments(page_id, notes_out),
+            lambda: self._fetch_comments(page_id, "inline", notes_out),
+            lambda: self._fetch_comments(page_id, "footer", notes_out),
+        ]
+        if page.get("spaceId"):
+            batch.append(lambda: client.get_space_name(page["spaceId"]))
+        if page.get("authorId"):
+            batch.append(lambda: client.get_user_display_name(page["authorId"]))
+        attachments, inline, footer, *_ = parallel_map(lambda fetch: fetch(), batch)
+        parallel_map(client.get_user_display_name, sorted(_comment_author_ids(inline + footer)))
+        return attachments, inline, footer
 
     def dump(self) -> None:
         self.summary = Summary(source="confluence")
@@ -400,12 +430,24 @@ class ConfluenceDumper(BaseDumper):
     ) -> str:
         if self.client is None:
             return ""
-        resolve_user = self.client.get_user_display_name
-        client = self.client
+        return self._format_comments(
+            page_id,
+            self._fetch_comments(page_id, "inline", notes_out),
+            self._fetch_comments(page_id, "footer", notes_out),
+            marker_line_map=marker_line_map,
+            notes_out=notes_out,
+        )
 
-        def attach_children(comments: list[dict], comment_type: str) -> None:
-            if not comments:
-                return
+    def _fetch_comments(
+        self, page_id: str, comment_type: str, notes_out: list[str] | None = None,
+    ) -> list[dict]:
+        """One kind of comment with replies attached; ``[]`` on failure (warned and noted)."""
+        client = self.client
+        if client is None:
+            return []
+        fetch = client.get_inline_comments if comment_type == "inline" else client.get_footer_comments
+        try:
+            comments = fetch(page_id)
             results = parallel_map(
                 lambda c: client.get_comment_children(c["id"], comment_type=comment_type),
                 comments,
@@ -413,30 +455,40 @@ class ConfluenceDumper(BaseDumper):
             for comment, children in zip(comments, results):
                 if children:
                     comment["_children"] = children
+            return comments
+        except Exception as exc:
+            self.warn(f"    ⚠ Failed to fetch {comment_type} comments for page {page_id}: {exc}")
+            if notes_out is not None:
+                notes_out.append(f"{comment_type} comments failed (page {page_id}): {exc}")
+            return []
 
+    def _format_comments(
+        self,
+        page_id: str,
+        inline_comments: list[dict],
+        footer_comments: list[dict],
+        marker_line_map: dict[str, int] | None = None,
+        notes_out: list[str] | None = None,
+    ) -> str:
+        if self.client is None:
+            return ""
+        resolve_user = self.client.get_user_display_name
         parts: list[str] = []
-        try:
-            inline_comments = client.get_inline_comments(page_id)
-            attach_children(inline_comments, "inline")
-            if inline_comments:
-                parts.append("### Inline Comments\n")
-                parts.append(comments_to_markdown(inline_comments, resolve_user=resolve_user, marker_line_map=marker_line_map))
-        except Exception as exc:
-            self.warn(f"    ⚠ Failed to fetch inline comments for page {page_id}: {exc}")
-            if notes_out is not None:
-                notes_out.append(f"inline comments failed (page {page_id}): {exc}")
-
-        try:
-            footer_comments = client.get_footer_comments(page_id)
-            attach_children(footer_comments, "footer")
-            if footer_comments:
-                parts.append("### Footer Comments\n")
-                parts.append(comments_to_markdown(footer_comments, resolve_user=resolve_user))
-        except Exception as exc:
-            self.warn(f"    ⚠ Failed to fetch footer comments for page {page_id}: {exc}")
-            if notes_out is not None:
-                notes_out.append(f"footer comments failed (page {page_id}): {exc}")
-
+        for comment_type, comments, line_map in (
+            ("inline", inline_comments, marker_line_map),
+            ("footer", footer_comments, None),
+        ):
+            if not comments:
+                continue
+            try:
+                body = comments_to_markdown(comments, resolve_user=resolve_user, marker_line_map=line_map)
+            except Exception as exc:
+                self.warn(f"    ⚠ Failed to render {comment_type} comments for page {page_id}: {exc}")
+                if notes_out is not None:
+                    notes_out.append(f"{comment_type} comments failed (page {page_id}): {exc}")
+                continue
+            parts.append(f"### {comment_type.capitalize()} Comments\n")
+            parts.append(body)
         return "\n".join(parts)
 
     def _download_page_images(
@@ -683,6 +735,17 @@ class ConfluenceDumper(BaseDumper):
             "",
         ]
         return "\n".join(lines)
+
+
+def _comment_author_ids(comments: list[dict]) -> set[str]:
+    """Author account ids of *comments* and their attached replies."""
+    ids: set[str] = set()
+    for comment in comments:
+        author = (comment.get("version") or {}).get("authorId")
+        if author:
+            ids.add(author)
+        ids |= _comment_author_ids(comment.get("_children") or [])
+    return ids
 
 
 def _format_iso_date(iso: str) -> str:
