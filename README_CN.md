@@ -268,9 +268,12 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./o
 
 # 或让 ctxd 自动选一个目录名
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
+
+# 单页写成一个文件；下载内容放在同级的 page_attachments/
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attachments -o page.md
 ```
 
-> **注意**：`-r` / `-i` / `--all-attachments` 需配合 `-o <dir>` 或 `-O`（Confluence 需要把页面树和图片写入磁盘）。
+> **注意**：`-r` / `-i` / `--all-attachments` 需配合 `-o` 或 `-O`。不带 `-r` 时，`-o page.md`（任何带后缀的路径）只写这一个文件，下载内容放在同级的 `page_attachments/`，与 Jira 一致。`-o <dir>`、`-O` 以及所有 `-r` 导出，每页写成 `<dir>/<id>_<title>/README.md`，旁边是 `images/` 与 `attachments/`；`-r` 配文件形式的 `-o` 会直接报错。
 > **短链接**：`/wiki/x/<token>` 形式的 URL 会在认证后跟随一次重定向，改写为标准长 URL 再进行页面抓取；`-O` 自动命名时因尚未拿到真实 page id，文件名回退为 `confluence-<token>`。
 
 ### 专属参数

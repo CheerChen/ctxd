@@ -87,3 +87,37 @@ def test_confluence_recursive_with_output_succeeds(monkeypatch, tmp_path) -> Non
     assert _FakeConfluenceDumper.last_instance.recursive is True
     assert _FakeConfluenceDumper.last_instance.include_images is True
     assert out.is_dir()
+
+
+def _invoke(monkeypatch, args):
+    monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.CONFLUENCE)
+    monkeypatch.setitem(DUMPERS, Source.CONFLUENCE, _FakeConfluenceDumper)
+    return CliRunner().invoke(main, [_CONF_URL, *args])
+
+
+def test_output_with_suffix_is_a_file_not_a_directory(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "out" / "page.md"
+
+    result = _invoke(monkeypatch, ["-o", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert _FakeConfluenceDumper.last_instance.output == str(target)
+    assert not target.exists()  # the CLI must not mkdir it; the dumper writes the file
+    assert target.parent.is_dir()
+
+
+def test_output_without_suffix_stays_a_directory(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "export"
+
+    result = _invoke(monkeypatch, ["-o", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert target.is_dir()
+
+
+def test_recursive_with_file_output_errors(monkeypatch, tmp_path) -> None:
+    result = _invoke(monkeypatch, ["-r", "-o", str(tmp_path / "tree.md")])
+
+    assert result.exit_code != 0
+    assert "-r writes a directory tree" in result.output
+    assert not (tmp_path / "tree.md").exists()

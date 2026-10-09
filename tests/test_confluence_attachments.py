@@ -211,3 +211,30 @@ def test_tree_export_folds_per_page_counts_into_one_note(tmp_path: Path) -> None
         "2 image(s) on 1 page(s) not downloaded (use -i); links point at the Confluence download URL",
         "7 attachment(s) on 2 page(s) not downloaded (use --all-attachments with -o/-O)",
     ]
+
+
+def test_single_file_output_writes_markdown_and_sibling_assets(tmp_path: Path) -> None:
+    from ctxd.summary import Summary
+
+    target = tmp_path / "page.md"
+    dumper = ConfluenceDumper(
+        url=f"{_BASE}/wiki/spaces/S/pages/999", output=str(target), fmt="md",
+        quiet=True, all_attachments=True,
+    )
+    client = _FakeClient([_PDF, _PNG])
+    client.get_page = lambda page_id: {"id": "999", "title": "Page", "body": {"storage": {"value": _HTML_WITH_IMAGE}}}
+    dumper.client = client
+    dumper.validate_auth = lambda: None
+    dumper.summary = Summary(source="confluence")
+
+    dumper.dump()
+
+    readme = target.read_text(encoding="utf-8")
+    assets = tmp_path / "page_attachments"
+    assert target.is_file()
+    assert (assets / "diagram.png").exists()
+    assert (assets / "Report — final.pdf").exists()
+    assert "page_attachments/diagram.png" in readme
+    assert "[Report — final.pdf](<page_attachments/Report — final.pdf>)" in readme
+    assert (tmp_path / "page.md.manifest.json").exists()
+    assert not (tmp_path / "999_Page").exists()

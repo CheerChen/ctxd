@@ -261,9 +261,12 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./o
 
 # Or let ctxd pick the output directory name
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
+
+# One page to one file; downloads land next to it in page_attachments/
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attachments -o page.md
 ```
 
-> **Note**: `-r` / `-i` / `--all-attachments` require `-o <dir>` or `-O` (Confluence writes a directory tree / images to disk).
+> **Note**: `-r` / `-i` / `--all-attachments` need `-o` or `-O`. Without `-r`, `-o page.md` (any path with a suffix) writes that one file, with downloads in a sibling `page_attachments/` — the same shape as Jira. `-o <dir>`, `-O` and every `-r` export write `<dir>/<id>_<title>/README.md` per page with `images/` and `attachments/` beside it; `-r` with a file-like `-o` is rejected.
 > **Tiny links**: `/wiki/x/<token>` URLs are followed once (after auth) and rewritten to the canonical long URL before any page fetch; `-O` auto-output names them `confluence-<token>` since the real page id isn't known at filename time.
 
 ### Options

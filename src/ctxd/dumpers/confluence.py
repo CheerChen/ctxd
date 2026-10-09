@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,39 @@ from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, pars
 from ctxd.dumpers.base import BaseDumper
 from ctxd.profiling import timed
 from ctxd.summary import ExportResult, PageStatus, Summary
+
+
+def confluence_output_is_file(path: Path, recursive: bool) -> bool:
+    """Whether ``-o`` names one Markdown file rather than an export directory.
+
+    A path with a suffix (``page.md``) that is not an existing directory is
+    a file, as it is for every other source.  ``-r`` always writes a tree.
+    """
+    return not recursive and bool(path.suffix) and not path.is_dir()
+
+
+@dataclass(frozen=True)
+class _PageLayout:
+    """Where one exported page and its downloads land on disk."""
+
+    markdown: Path
+    image_dir: Path
+    file_dir: Path
+    debug_html: Path
+
+    @classmethod
+    def directory(cls, page_dir: Path) -> "_PageLayout":
+        return cls(page_dir / "README.md", page_dir / "images", page_dir / "attachments",
+                   page_dir / "raw.html")
+
+    @classmethod
+    def single_file(cls, path: Path) -> "_PageLayout":
+        # Same shape as Jira: <stem>_attachments/ next to the file.
+        assets = path.parent / f"{path.stem}_attachments"
+        return cls(path, assets, assets, path.with_suffix(".raw.html"))
+
+    def link(self, target: Path) -> str:
+        return target.relative_to(self.markdown.parent).as_posix()
 
 
 class ConfluenceDumper(BaseDumper):
@@ -189,7 +223,11 @@ class ConfluenceDumper(BaseDumper):
             return
 
         output_path = Path(self.output)
-        output_path.mkdir(parents=True, exist_ok=True)
+        single_file = confluence_output_is_file(output_path, self.recursive)
+        if single_file:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            output_path.mkdir(parents=True, exist_ok=True)
 
         if self.client is None:
             raise RuntimeError("Confluence client not initialized")
@@ -206,6 +244,7 @@ class ConfluenceDumper(BaseDumper):
                     global_attachment_pool=global_attachment_pool,
                     pool_lock=pool_lock,
                     run_budget=run_budget,
+                    layout=_PageLayout.single_file(output_path) if single_file else None,
                 ),
                 raw["pages"],
             )
@@ -254,6 +293,7 @@ class ConfluenceDumper(BaseDumper):
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
         run_budget=None,
+        layout: _PageLayout | None = None,
     ) -> ExportResult:
         """Export a single page.  Returns an ``ExportResult`` (thread-safe).
 
@@ -280,14 +320,14 @@ class ConfluenceDumper(BaseDumper):
                     title=title, reason="empty page body",
                 )
 
-            safe_title = self._sanitize_filename(title)
-            page_dir = output_dir / f"{page_id}_{safe_title}"
-            page_dir.mkdir(parents=True, exist_ok=True)
+            if layout is None:
+                safe_title = self._sanitize_filename(title)
+                layout = _PageLayout.directory(output_dir / f"{page_id}_{safe_title}")
+            layout.markdown.parent.mkdir(parents=True, exist_ok=True)
 
             if self.debug:
                 from ctxd.dumpers.base import _atomic_write_text
-                raw_path = page_dir / "raw.html"
-                _atomic_write_text(raw_path, html_content)
+                _atomic_write_text(layout.debug_html, html_content)
 
             image_map: dict[str, str] = {}
             file_map: dict[str, str] = {}
@@ -301,7 +341,7 @@ class ConfluenceDumper(BaseDumper):
                     image_map = self._download_page_images(
                         page_id=page_id,
                         page_html=html_content,
-                        page_dir=page_dir,
+                        layout=layout,
                         global_attachment_pool=global_attachment_pool,
                         pool_lock=pool_lock,
                         notes_out=worker_notes,
@@ -311,7 +351,7 @@ class ConfluenceDumper(BaseDumper):
                 if self.all_attachments:
                     file_map = self._download_page_files(
                         page_id=page_id,
-                        page_dir=page_dir,
+                        layout=layout,
                         attachments=attachments_meta,
                         notes_out=worker_notes,
                         run_budget=run_budget,
@@ -354,8 +394,8 @@ class ConfluenceDumper(BaseDumper):
                 markdown = _apply_stdout_limit(markdown, self.max_chars, worker_summary, channel="file")
                 worker_truncated = worker_summary.truncated
                 worker_notes.extend(worker_summary.notes)
-            _atomic_write_text(page_dir / "README.md", markdown)
-            self.log(f"  ✓ Saved: {page_dir / 'README.md'}")
+            _atomic_write_text(layout.markdown, markdown)
+            self.log(f"  ✓ Saved: {layout.markdown}")
             return ExportResult(
                 status=PageStatus.WRITTEN, page_id=page_id, title=title,
                 notes=worker_notes, truncated=worker_truncated, tally=tally,
@@ -495,7 +535,7 @@ class ConfluenceDumper(BaseDumper):
         self,
         page_id: str,
         page_html: str,
-        page_dir: Path,
+        layout: _PageLayout,
         global_attachment_pool: dict[str, str],
         pool_lock: threading.Lock,
         notes_out: list[str] | None = None,
@@ -529,7 +569,7 @@ class ConfluenceDumper(BaseDumper):
             else:
                 used_attachments = set(extract_confluence_images(page_html))
 
-            image_dir = page_dir / "images"
+            image_dir = layout.image_dir
 
             def resolve(filename: str) -> dict | None:
                 attachment = attachment_map.get(filename)
@@ -580,7 +620,7 @@ class ConfluenceDumper(BaseDumper):
 
             for filename, ok in parallel_map(download_one, download_targets):
                 if ok:
-                    image_map[filename] = f"images/{filename}"
+                    image_map[filename] = layout.link(image_dir / filename)
 
             if image_map:
                 self.log(f"    ✓ Downloaded {len(image_map)} images")
@@ -593,7 +633,7 @@ class ConfluenceDumper(BaseDumper):
     def _download_page_files(
         self,
         page_id: str,
-        page_dir: Path,
+        layout: _PageLayout,
         attachments: list[dict],
         notes_out: list[str],
         run_budget=None,
@@ -624,7 +664,7 @@ class ConfluenceDumper(BaseDumper):
             targets.append((attachment, name))
 
         client = self.client
-        file_dir = page_dir / "attachments"
+        file_dir = layout.file_dir
 
         def download_one(target: tuple[dict, str]) -> tuple[dict, str, str | None]:
             attachment, name = target
@@ -649,7 +689,7 @@ class ConfluenceDumper(BaseDumper):
                 self.warn(f"    ⚠ Failed to download {title}: {error}")
                 notes_out.append(f"attachment download failed: {title} ({error})")
                 continue
-            file_map[title] = f"attachments/{name}"
+            file_map[title] = layout.link(file_dir / name)
 
         if file_map:
             self.log(f"    ✓ Downloaded {len(file_map)} attachment(s)")

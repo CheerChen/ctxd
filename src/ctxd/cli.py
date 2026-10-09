@@ -13,6 +13,7 @@ from ctxd import __version__
 from ctxd.auth import AuthError
 from ctxd.concurrency import configure as configure_concurrency
 from ctxd.dumpers import DUMPERS
+from ctxd.dumpers.confluence import confluence_output_is_file
 from ctxd.profiling import emit_report, enable_profiling
 from ctxd.recurse import render_with_recurse
 from ctxd.router import Source, detect
@@ -209,17 +210,20 @@ def main(
     if use_recurse and source is Source.CONFLUENCE and (output is not None or auto_output):
         if not quiet:
             click.echo(
-                "ℹ Cross-source recursion disabled for Confluence directory export "
+                "ℹ Cross-source recursion disabled for Confluence -o/-O export "
                 "(use stdout, or omit -o/-O to enable).",
                 err=True,
             )
         use_recurse = False
 
     # Confluence directory export is the only mode where the output path is
-    # itself a directory.  Everywhere else -o accepts "file or directory":
-    # an existing directory gets the default filename appended, instead of
-    # failing at rename time with "Is a directory".
-    writes_directory = source is Source.CONFLUENCE
+    # itself a directory; `-o page.md` without -r is a file like everywhere
+    # else.  Elsewhere -o accepts "file or directory": an existing directory
+    # gets the default filename appended, instead of failing at rename time
+    # with "Is a directory".
+    writes_directory = source is Source.CONFLUENCE and not (
+        output is not None and confluence_output_is_file(output, recursive)
+    )
 
     resolved_output: Path | None = output
     if auto_output:
@@ -251,7 +255,7 @@ def main(
             emit_report()
         return
 
-    if resolved_output and source is Source.CONFLUENCE:
+    if resolved_output and writes_directory:
         resolved_output.mkdir(parents=True, exist_ok=True)
     elif resolved_output:
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -349,6 +353,13 @@ def _validate_confluence_flags(
     include_images: bool,
     all_attachments: bool,
 ) -> None:
+    # The same path without -r would be a single file; -r cannot write one.
+    if output is not None and recursive and confluence_output_is_file(output, recursive=False):
+        raise click.UsageError(
+            f"-r writes a directory tree; -o {output} looks like a file.\n"
+            f"Try:   ctxd {url} -r -o {output.with_suffix('')}\n"
+            f"Or:    ctxd {url} -r -O"
+        )
     if output is not None or auto_output:
         return
 
@@ -363,9 +374,11 @@ def _validate_confluence_flags(
         return
 
     flags = " ".join(used)
+    # -r writes a tree; -i / --all-attachments alone can write one file.
+    target = "<dir>" if recursive else "page.md"
     raise click.UsageError(
-        f"{flags} requires -o <dir> or -O (Confluence writes a directory tree / images to disk).\n"
-        f"Try:   ctxd {url} {flags} -o <dir>\n"
+        f"{flags} requires -o or -O (Confluence writes files to disk).\n"
+        f"Try:   ctxd {url} {flags} -o {target}\n"
         f"Or:    ctxd {url} {flags} -O\n"
         f"Or omit the flags for single-page stdout: ctxd {url}"
     )
