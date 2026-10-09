@@ -403,3 +403,36 @@ def test_cli_rejects_since_for_non_slack_source() -> None:
 
     assert result.exit_code == 2
     assert "--since only applies to Slack thread URLs" in result.output
+
+
+def test_fetch_resolves_users_and_channel_concurrently(monkeypatch) -> None:
+    """Participants, mentioned users and the channel are looked up in one
+    concurrent batch during fetch, so rendering never waits on users.info
+    one round trip at a time."""
+    import threading
+
+    dumper = SlackDumper(url="https://foo.slack.com/archives/C123/p1735881234123456", output=None, fmt="md")
+    messages = [
+        {"ts": "1735881234.123456", "user": "U1", "text": "hi <@U3>"},
+        {"ts": "1735881235.000000", "user": "U2", "text": "ok"},
+    ]
+    monkeypatch.setattr(dumper, "_fetch_thread_messages", lambda channel, ts, oldest=None: messages)
+    # Every lookup must be in flight at once to get past the barrier; a
+    # serial loop times out on the first call.
+    barrier = threading.Barrier(4, timeout=2)
+
+    def fake_api_call(method: str, params: dict[str, str]) -> dict:
+        barrier.wait()
+        if method == "conversations.info":
+            return {"ok": True, "channel": {"name": "general"}}
+        uid = params["user"]
+        return {"ok": True, "user": {"id": uid, "profile": {"real_name_normalized": f"name-{uid}"}}}
+
+    monkeypatch.setattr(dumper, "_api_call", fake_api_call)
+
+    raw = dumper.fetch()
+
+    assert raw["channel_name"] == "general"
+    assert {uid: u["name"] for uid, u in dumper._user_cache.items()} == {
+        "U1": "name-U1", "U2": "name-U2", "U3": "name-U3",
+    }

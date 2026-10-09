@@ -10,10 +10,13 @@ from urllib.parse import urlsplit
 import requests
 
 from ctxd.auth import get_slack_token
+from ctxd.concurrency import parallel_map
 from ctxd.dumpers.base import BaseDumper
 from ctxd.http_retry import mount_retry
 from ctxd.profiling import instrument_session
 from ctxd.router import parse_slack_focused_ts, parse_slack_thread_url
+
+_USER_MENTION_RE = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]+)?>")
 
 
 class SlackDumper(BaseDumper):
@@ -75,7 +78,15 @@ class SlackDumper(BaseDumper):
             raise RuntimeError("No messages found in Slack thread.")
 
         participants = sorted({m.get("user") for m in messages if m.get("user")})
+        # Resolve every user the output will name (authors and mentions) and
+        # the channel in one concurrent batch; rendering then reads the cache
+        # instead of paying one serial users.info round trip per person.
+        mentioned = {uid for m in messages for uid in _USER_MENTION_RE.findall(m.get("text", ""))}
+        lookups = [lambda uid=uid: self._get_user(uid) for uid in sorted(set(participants) | mentioned)]
         # The incremental header omits the channel, so skip the lookup.
+        if not self.since:
+            lookups.append(lambda: self._get_channel_name(channel))
+        parallel_map(lambda lookup: lookup(), lookups)
         channel_name = "" if self.since else self._get_channel_name(channel)
 
         if self.since:
@@ -486,15 +497,13 @@ class SlackDumper(BaseDumper):
         )
 
     def _convert_user_mentions(self, text: str) -> str:
-        pattern = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]+)?>")
-
         def replace(match: re.Match[str]) -> str:
             uid = match.group(1)
             user = self._get_user(uid)
             username = self._conversation_user_name(user, uid)
             return f"@{username}"
 
-        return pattern.sub(replace, text)
+        return _USER_MENTION_RE.sub(replace, text)
 
     def _convert_channel_mentions(self, text: str) -> str:
         pattern = re.compile(r"<#([CG][A-Z0-9]+)(?:\|([^>]+))?>")
