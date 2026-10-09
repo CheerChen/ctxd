@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+* **Slack `--since <ts>`** : following up on a thread meant exporting it again, so an agent re-read every earlier message to find the few new ones. `--since` passes `oldest` to `conversations.replies` and exports only the replies after `<ts>`, under a short header (thread URL, since, new message count, last ts); with nothing new it prints `No new replies since <ts>.` and exits 0. The API returns the thread parent on every call even when `oldest` is past it (checked against a live thread), so the parent is dropped locally. Full exports now state `Last Message ts` in the header and the run summary, which is the value to pass back. `-O` names the incremental file `….since-<ts>.md` so it does not overwrite the full export. A malformed ts, or `--since` on a non-Slack URL, is a usage error.
+
 ## [0.6.1]
 
 ### Fixed

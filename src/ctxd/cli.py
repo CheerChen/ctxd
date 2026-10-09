@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,8 @@ from ctxd.router import Source, detect
 @click.option("--download-files", is_flag=True, default=False,
               help="Slack: download thread attachments (requires -o or -O)")
 @click.option("--raw", is_flag=True, default=False, help="Keep original Slack mrkdwn")
+@click.option("--since", "since", default=None, metavar="TS",
+              help="Slack: only replies posted after this message ts (the 'Last Message ts' of an earlier export)")
 @click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
               help="Confluence: also export child pages (requires -o or -O)")
 @click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
@@ -75,6 +78,7 @@ def main(
     no_bots: bool,
     download_files: bool,
     raw: bool,
+    since: str | None,
     recursive: bool,
     include_images: bool,
     all_attachments: bool,
@@ -131,6 +135,9 @@ def main(
     ):
         quiet = True
 
+    if since is not None and source is not Source.SLACK_THREAD:
+        raise click.UsageError("--since only applies to Slack thread URLs")
+
     output_str = str(output) if output else None
 
     # Options every dumper accepts; source-specific flags are validated and
@@ -183,10 +190,12 @@ def main(
     else:
         _validate_slack_flags(
             url=url, output=output, auto_output=auto_output, download_files=download_files,
+            since=since,
         )
         extra_kwargs = {
             "download_files": download_files,
             "raw": raw,
+            "since": since,
         }
 
     dumper = DUMPERS[source](**common_kwargs, **extra_kwargs)
@@ -285,7 +294,16 @@ def _validate_slack_flags(
     output: Path | None,
     auto_output: bool,
     download_files: bool,
+    since: str | None = None,
 ) -> None:
+    # A Slack message ts is <epoch seconds>.<6-digit sequence>; reject anything
+    # else here rather than letting the API silently ignore a malformed oldest.
+    if since is not None and not re.fullmatch(r"\d{10}\.\d{6}", since):
+        raise click.UsageError(
+            f"--since expects a Slack message ts like 1735881234.123456, got: {since}\n"
+            "Use the 'Last Message ts' line of an earlier export."
+        )
+
     if not download_files or output is not None or auto_output:
         return
 

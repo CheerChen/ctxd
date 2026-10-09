@@ -210,6 +210,17 @@ ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
 |------|------|
 | `--download-files` | 下载附件到输出文件旁的 `attachments/`，文件名格式为 `IMG_{file_id}.{ext}`（如 `IMG_F0AAAAAAA1.png`）；需要 `-o`/`-O`，且 Slack token 含 `files:read` scope |
 | `--raw` | 保留原始 Slack mrkdwn 标记 |
+| `--since <ts>` | 只导出消息 `<ts>`（如 `1735881234.123456`）之后的回复 |
+
+#### 跟进 thread 的新回复
+
+每次导出的 header 都有 `**Last Message ts:**`，运行摘要里也会重复一遍。thread 有了新回复时，把这个值传回去，不必重读整串：
+
+```bash
+ctxd '<thread-url>' --since 1735881234.123456
+```
+
+输出只有一个精简 header（thread URL、since、新消息数、新的 `Last Message ts`）和新回复；没有新回复时输出 `No new replies since <ts>.`，退出码为 0。过滤由 Slack 完成（`conversations.replies` 的 `oldest` 参数）；该 API 每次都会返回 thread parent，ctxd 在本地把它去掉。配合 `-O` 时文件名为 `slack-<channel>-<thread>.since-<ts>.md`，不会覆盖全量导出。这个模式看不到 `<ts>` 之前消息的编辑和删除，需要时请重新全量导出。
 
 每条附件行都保留 Slack permalink（供人在浏览器打开）；文件下载成功时追加 `— saved: attachments/IMG_<id>.<ext>`，这样从导出产物就能找到本地副本。运行摘要会报告下载了几个文件，或未使用该 flag 时跳过了几个。
 

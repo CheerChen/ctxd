@@ -26,11 +26,14 @@ class SlackDumper(BaseDumper):
         verbose: bool = False,
         download_files: bool = False,
         raw: bool = False,
+        since: str | None = None,
         **kwargs,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
         self.download_files = download_files
         self.raw = raw
+        # Incremental mode: only replies posted after this message ts.
+        self.since = since
         self.token = ""
         self.focused_ts = parse_slack_focused_ts(url)
         self.session = requests.Session()
@@ -49,7 +52,9 @@ class SlackDumper(BaseDumper):
     def default_filename(self) -> str:
         channel_id, thread_ts = parse_slack_thread_url(self.url)
         ext = "md" if self.fmt == "md" else "txt"
-        return f"slack-{channel_id}-{thread_ts}.{ext}"
+        # An incremental export must not overwrite the full one it extends.
+        suffix = f".since-{self.since}" if self.since else ""
+        return f"slack-{channel_id}-{thread_ts}{suffix}.{ext}"
 
     def validate_auth(self) -> None:
         self.token = get_slack_token()
@@ -59,14 +64,26 @@ class SlackDumper(BaseDumper):
         self.summary.source = "slack_thread"
         self.summary.resources_fetched = 1
         channel, thread_ts = parse_slack_thread_url(self.url)
-        messages = self._fetch_thread_messages(channel, thread_ts)
-        if not messages:
+        messages = self._fetch_thread_messages(channel, thread_ts, oldest=self.since)
+        if self.since:
+            # conversations.replies returns the thread parent on every page even
+            # when oldest is past it (verified against the live API), so filter
+            # locally rather than trusting the server-side cut.
+            since = float(self.since)
+            messages = [m for m in messages if float(m.get("ts", "0")) > since]
+        elif not messages:
             raise RuntimeError("No messages found in Slack thread.")
 
         participants = sorted({m.get("user") for m in messages if m.get("user")})
-        channel_name = self._get_channel_name(channel)
+        # The incremental header omits the channel, so skip the lookup.
+        channel_name = "" if self.since else self._get_channel_name(channel)
 
-        self.summary.add_note(f"{len(messages)} messages, {len(participants)} participants")
+        if self.since:
+            self.summary.add_note(f"{len(messages)} new message(s) since {self.since}")
+        else:
+            self.summary.add_note(f"{len(messages)} messages, {len(participants)} participants")
+        if messages:
+            self.summary.add_note(f"last ts {messages[-1]['ts']} (pass --since {messages[-1]['ts']} for later replies)")
 
         return {
             "channel": channel,
@@ -83,7 +100,11 @@ class SlackDumper(BaseDumper):
         messages = raw["messages"]
         participants = raw["participants"]
 
+        if self.since:
+            return self._transform_since(channel, thread_ts, messages)
+
         start_time = self._format_ts(messages[0].get("ts", thread_ts))
+        last_ts = messages[-1].get("ts", thread_ts)
 
         focused_msg = None
         if self.focused_ts:
@@ -97,6 +118,7 @@ class SlackDumper(BaseDumper):
             lines.append(f"**Channel URL:** {self._channel_url(channel)}")
             lines.append(f"**Thread Started:** {start_time}")
             lines.append(f"**Thread URL:** {self._thread_url(channel, thread_ts)}")
+            lines.append(f"**Last Message ts:** {last_ts}")
             if focused_msg:
                 focused_user = self._get_user(focused_msg.get("user", "")) if focused_msg.get("user") else {}
                 focused_name = self._conversation_user_name(focused_user, focused_msg.get("user", "unknown"))
@@ -116,6 +138,7 @@ class SlackDumper(BaseDumper):
             lines.append(f"Channel URL: {self._channel_url(channel)}")
             lines.append(f"Thread Started: {start_time}")
             lines.append(f"Thread URL: {self._thread_url(channel, thread_ts)}")
+            lines.append(f"Last Message ts: {last_ts}")
             if focused_msg:
                 focused_user = self._get_user(focused_msg.get("user", "")) if focused_msg.get("user") else {}
                 focused_name = self._conversation_user_name(focused_user, focused_msg.get("user", "unknown"))
@@ -128,10 +151,48 @@ class SlackDumper(BaseDumper):
             lines.append("--- CONVERSATION ---")
             lines.append("")
 
+        lines.extend(self._format_messages(messages))
+        return "\n".join(lines).strip() + "\n"
+
+    def _transform_since(self, channel: str, thread_ts: str, messages: list[dict]) -> str:
+        """Short header plus only the new replies: the reader already holds
+        the earlier export, so channel / participants are not repeated."""
+        since_time = self._format_ts(self.since)
+        # With nothing new, the cursor stays where it was.
+        last_ts = messages[-1].get("ts", self.since) if messages else self.since
+        lines: list[str] = []
+        if self.fmt == "md":
+            lines.append(f"# Slack Thread: {channel}-{thread_ts} (new replies)")
+            lines.append("")
+            lines.append(f"**Thread URL:** {self._thread_url(channel, thread_ts)}")
+            lines.append(f"**Since:** {self.since} ({since_time})")
+            lines.append(f"**New Messages:** {len(messages)}")
+            lines.append(f"**Last Message ts:** {last_ts}")
+            lines.append("")
+            if messages:
+                lines.append("## New Replies")
+                lines.append("")
+        else:
+            lines.append(f"# SLACK THREAD: {channel}-{thread_ts} (new replies)")
+            lines.append(f"Thread URL: {self._thread_url(channel, thread_ts)}")
+            lines.append(f"Since: {self.since} ({since_time})")
+            lines.append(f"New Messages: {len(messages)}")
+            lines.append(f"Last Message ts: {last_ts}")
+            lines.append("")
+            if messages:
+                lines.append("--- NEW REPLIES ---")
+                lines.append("")
+        if not messages:
+            lines.append(f"No new replies since {self.since}.")
+        lines.extend(self._format_messages(messages))
+        return "\n".join(lines).strip() + "\n"
+
+    def _format_messages(self, messages: list[dict]) -> list[str]:
         attachment_base_dir = Path(self.output).parent if self.output else Path.cwd()
 
         self._files_seen = 0
         self._files_downloaded = 0
+        lines: list[str] = []
         for msg in messages:
             lines.extend(
                 self._format_message(
@@ -143,7 +204,7 @@ class SlackDumper(BaseDumper):
             )
 
         self._report_file_stats()
-        return "\n".join(lines).strip() + "\n"
+        return lines
 
     def _report_file_stats(self) -> None:
         """One summary line for the whole thread — never silent about files
@@ -179,7 +240,7 @@ class SlackDumper(BaseDumper):
             raise RuntimeError(details)
         return payload
 
-    def _fetch_thread_messages(self, channel: str, thread_ts: str) -> list[dict]:
+    def _fetch_thread_messages(self, channel: str, thread_ts: str, oldest: str | None = None) -> list[dict]:
         messages: list[dict] = []
         cursor = ""
 
@@ -190,6 +251,9 @@ class SlackDumper(BaseDumper):
                 "limit": "200",
                 "inclusive": "true",
             }
+            if oldest:
+                params["oldest"] = oldest
+                params["inclusive"] = "false"
             if cursor:
                 params["cursor"] = cursor
 

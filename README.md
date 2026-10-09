@@ -203,6 +203,17 @@ When you copy a link to a specific reply (archive URL with `?thread_ts=` where t
 |--------|-------------|
 | `--download-files` | Download attachments next to the output as `attachments/IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`); requires `-o`/`-O` and the `files:read` scope on the Slack token |
 | `--raw` | Keep original Slack mrkdwn markup |
+| `--since <ts>` | Export only the replies posted after message `<ts>` (e.g. `1735881234.123456`) |
+
+#### Following up on a thread
+
+Every export states `**Last Message ts:**` in its header, and the run summary repeats it. When the thread gets more replies, pass that value back instead of re-reading the whole thread:
+
+```bash
+ctxd '<thread-url>' --since 1735881234.123456
+```
+
+The output carries a short header (thread URL, since, number of new messages, new `Last Message ts`) and the new replies only; with nothing new it says `No new replies since <ts>.` and exits 0. Filtering is done by Slack (`conversations.replies` with `oldest`); the thread parent, which the API returns on every call regardless, is dropped locally. With `-O` the file is named `slack-<channel>-<thread>.since-<ts>.md`, so it does not overwrite the full export. Edits to, or deletions of, messages before `<ts>` are not visible in this mode — run a full export when those matter.
 
 Each attachment line keeps the Slack permalink (the address a human opens) and, when the file was downloaded, appends `— saved: attachments/IMG_<id>.<ext>` so the local copy is discoverable from the export. The run summary reports how many files were downloaded, or how many were left behind when the flag is not used.
 

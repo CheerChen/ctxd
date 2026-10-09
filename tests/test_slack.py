@@ -288,3 +288,118 @@ def test_no_focused_message_when_thread_root_url(monkeypatch) -> None:
     assert "**Focused Message:**" not in out
     # No ▶ marker
     assert "▶" not in out
+
+
+# ---------------------------------------------------------------------------
+# --since: incremental export of replies after a known message ts
+# ---------------------------------------------------------------------------
+
+_THREAD_URL = "https://example.slack.com/archives/C12345678/p1782879875064939"
+
+
+def _since_dumper(monkeypatch, since: str | None, replies: list[dict]) -> tuple[SlackDumper, list]:
+    """Dumper whose API returns ``replies``; records every call it receives."""
+    dumper = SlackDumper(url=_THREAD_URL, output=None, fmt="md", since=since)
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fake_api_call(method: str, params: dict[str, str]) -> dict:
+        calls.append((method, params))
+        if method == "conversations.replies":
+            return {"ok": True, "messages": replies}
+        if method == "conversations.info":
+            return {"ok": True, "channel": {"name": "test-room"}}
+        return {"ok": True, "user": {"id": params.get("user"), "name": "test.user"}}
+
+    monkeypatch.setattr(dumper, "_api_call", fake_api_call)
+    return dumper, calls
+
+
+def test_since_passes_oldest_and_drops_parent(monkeypatch) -> None:
+    # The live API returns the thread parent even when oldest is past it.
+    replies = [
+        {"ts": "1782879875.064939", "text": "root", "user": "U001"},
+        {"ts": "1782880900.000002", "text": "new reply", "user": "U002"},
+    ]
+    dumper, calls = _since_dumper(monkeypatch, "1782880850.739909", replies)
+
+    raw = dumper.fetch()
+
+    method, params = calls[0]
+    assert method == "conversations.replies"
+    assert params["oldest"] == "1782880850.739909"
+    assert params["inclusive"] == "false"
+    assert [m["ts"] for m in raw["messages"]] == ["1782880900.000002"]
+    # The incremental header has no channel line, so no conversations.info.
+    assert all(m != "conversations.info" for m, _ in calls)
+
+
+def test_since_renders_short_header_and_new_replies_only(monkeypatch) -> None:
+    monkeypatch.setattr(SlackDumper, "_format_ts", staticmethod(lambda ts: "2026-07-01 13:47:30"))
+    replies = [
+        {"ts": "1782879875.064939", "text": "root", "user": "U001"},
+        {"ts": "1782880900.000002", "text": "new reply", "user": "U002"},
+    ]
+    dumper, _ = _since_dumper(monkeypatch, "1782880850.739909", replies)
+
+    out = dumper.transform(dumper.fetch())
+
+    assert "**New Messages:** 1" in out
+    assert "**Last Message ts:** 1782880900.000002" in out
+    assert "new reply" in out
+    assert "root" not in out
+    assert "## Participants" not in out
+
+
+def test_since_with_no_new_replies_keeps_cursor(monkeypatch) -> None:
+    replies = [{"ts": "1782879875.064939", "text": "root", "user": "U001"}]
+    dumper, _ = _since_dumper(monkeypatch, "1782880850.739909", replies)
+
+    out = dumper.transform(dumper.fetch())
+
+    assert "**New Messages:** 0" in out
+    assert "**Last Message ts:** 1782880850.739909" in out
+    assert "No new replies since 1782880850.739909." in out
+
+
+def test_full_export_states_last_message_ts(monkeypatch) -> None:
+    replies = [
+        {"ts": "1782879875.064939", "text": "root", "user": "U001"},
+        {"ts": "1782880850.739909", "text": "reply", "user": "U002"},
+    ]
+    dumper, calls = _since_dumper(monkeypatch, None, replies)
+
+    out = dumper.transform(dumper.fetch())
+
+    assert "oldest" not in calls[0][1]
+    assert "**Last Message ts:** 1782880850.739909" in out
+
+
+def test_since_default_filename_does_not_clobber_full_export() -> None:
+    full = SlackDumper(url=_THREAD_URL, output=None, fmt="md")
+    since = SlackDumper(url=_THREAD_URL, output=None, fmt="md", since="1782880850.739909")
+
+    assert full.default_filename() == "slack-C12345678-1782879875.064939.md"
+    assert since.default_filename() == "slack-C12345678-1782879875.064939.since-1782880850.739909.md"
+
+
+@pytest.mark.parametrize("bad", ["123", "1782880850", "p1782880850739909", "1782880850.7399"])
+def test_cli_rejects_malformed_since(bad) -> None:
+    from click.testing import CliRunner
+
+    from ctxd.cli import main
+
+    result = CliRunner().invoke(main, [_THREAD_URL, "--since", bad])
+
+    assert result.exit_code == 2
+    assert "--since expects a Slack message ts" in result.output
+
+
+def test_cli_rejects_since_for_non_slack_source() -> None:
+    from click.testing import CliRunner
+
+    from ctxd.cli import main
+
+    result = CliRunner().invoke(main, ["https://github.com/o/r/pull/1", "--since", "1782880850.739909"])
+
+    assert result.exit_code == 2
+    assert "--since only applies to Slack thread URLs" in result.output

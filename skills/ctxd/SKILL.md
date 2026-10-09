@@ -85,6 +85,18 @@ Confluence page with every attachment (PDF, xlsx, …) saved next to it:
 ctxd '<confluence-url>' --all-attachments -O
 ```
 
+Slack thread you already read, after the user says there are new replies —
+take the `Last Message ts` from the earlier export (header or run summary) and
+fetch only what came after it, instead of re-reading the whole thread:
+
+```bash
+ctxd '<slack-url>' -f text --since <last-message-ts>
+```
+
+The output's own `Last Message ts` is the cursor for the next follow-up. Edits
+to earlier messages are not visible this way; re-run without `--since` if the
+user says an earlier message changed.
+
 Attachments are never downloaded by default. When an issue or page has
 attachments that were skipped, the run summary says so — read it before
 concluding that content is missing.
