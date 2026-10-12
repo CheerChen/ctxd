@@ -28,16 +28,13 @@ _HTML = '<ac:image ac:alt="d"><ri:attachment ri:filename="diagram.png" /></ac:im
 # URL construction
 # ---------------------------------------------------------------------------
 
-def test_attachment_download_url_makes_relative_link_absolute() -> None:
-    assert attachment_download_url(_BASE, _ATTACHMENT) == _DOWNLOAD_URL
-
-
-def test_attachment_download_url_accepts_trailing_slash_base() -> None:
-    assert attachment_download_url(f"{_BASE}/", _ATTACHMENT) == _DOWNLOAD_URL
-
-
-def test_attachment_download_url_empty_without_link() -> None:
-    assert attachment_download_url(_BASE, {"title": "x.png"}) == ""
+@pytest.mark.parametrize("base, attachment, expected", [
+    (_BASE, _ATTACHMENT, _DOWNLOAD_URL),        # relative link made absolute
+    (f"{_BASE}/", _ATTACHMENT, _DOWNLOAD_URL),  # trailing slash on the base
+    (_BASE, {"title": "x.png"}, ""),            # no download link
+])
+def test_attachment_download_url(base: str, attachment: dict, expected: str) -> None:
+    assert attachment_download_url(base, attachment) == expected
 
 
 def test_build_attachment_urls_skips_entries_without_link() -> None:
@@ -50,20 +47,13 @@ def test_build_attachment_urls_skips_entries_without_link() -> None:
 # Resolution order
 # ---------------------------------------------------------------------------
 
-def test_local_copy_wins_over_remote_url() -> None:
-    src = resolve_image_src("diagram.png", {"diagram.png": "images/diagram.png"},
-                            {"diagram.png": _DOWNLOAD_URL})
-
-    assert src == "images/diagram.png"
-
-
-def test_remote_url_used_when_not_downloaded() -> None:
-    assert resolve_image_src("diagram.png", {}, {"diagram.png": _DOWNLOAD_URL}) == _DOWNLOAD_URL
-
-
-def test_unknown_attachment_keeps_relative_path() -> None:
-    """drawio / plantuml output may not exist as an attachment at all."""
-    assert resolve_image_src("diagram.png", {}, {}) == "images/diagram.png"
+@pytest.mark.parametrize("image_map, fallback, expected", [
+    ({"diagram.png": "images/diagram.png"}, {"diagram.png": _DOWNLOAD_URL}, "images/diagram.png"),  # local wins
+    ({}, {"diagram.png": _DOWNLOAD_URL}, _DOWNLOAD_URL),                                              # then remote
+    ({}, {}, "images/diagram.png"),  # drawio / plantuml output may not exist as an attachment at all
+])
+def test_resolve_image_src_prefers_local_then_remote(image_map, fallback, expected) -> None:
+    assert resolve_image_src("diagram.png", image_map, fallback) == expected
 
 
 @pytest.mark.parametrize("html", [

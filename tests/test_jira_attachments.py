@@ -56,32 +56,18 @@ def test_referenced_ids(text: str, expected: set[str]) -> None:
     assert referenced_ids(text) == expected
 
 
-def test_select_none_without_flags() -> None:
+@pytest.mark.parametrize("referenced, include_images, all_attachments, expected", [
+    ({"543376"}, False, False, []),                   # no flag: nothing
+    ({"543376", "99"}, True, False, ["543376"]),      # -i: referenced images only, never the PDF
+    (set(), True, False, []),                         # -i: unreferenced image skipped
+    (set(), False, True, ["543376", "99"]),           # --all-attachments: everything
+])
+def test_select_attachments(referenced, include_images, all_attachments, expected) -> None:
     attachments = parse_attachments({"attachment": [_IMG, _PDF]})
 
-    assert select_attachments(attachments, {"543376"}, False, False) == []
+    selected = select_attachments(attachments, referenced, include_images, all_attachments)
 
-
-def test_select_include_images_only_referenced_images() -> None:
-    attachments = parse_attachments({"attachment": [_IMG, _PDF]})
-
-    selected = select_attachments(attachments, {"543376", "99"}, True, False)
-
-    assert [a.id for a in selected] == ["543376"]
-
-
-def test_select_include_images_skips_unreferenced() -> None:
-    attachments = parse_attachments({"attachment": [_IMG]})
-
-    assert select_attachments(attachments, set(), True, False) == []
-
-
-def test_select_all_attachments_ignores_references() -> None:
-    attachments = parse_attachments({"attachment": [_IMG, _PDF]})
-
-    selected = select_attachments(attachments, set(), False, True)
-
-    assert [a.id for a in selected] == ["543376", "99"]
+    assert [a.id for a in selected] == expected
 
 
 def test_target_name_prefixes_attachment_id() -> None:

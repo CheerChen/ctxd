@@ -62,3 +62,44 @@ def test_failed_diff_fetch_warns_and_counts(capsys) -> None:
     err = capsys.readouterr().err
     assert "PR diff fetch failed" in err and "network error" in err
     assert d.summary.failed == 1
+
+
+# ---------------------------------------------------------------------------
+# Fetch: comments and reviews, and --no-bots
+# ---------------------------------------------------------------------------
+
+def _user(login: str, bot: bool = False) -> dict:
+    return {"login": login, "type": "Bot" if bot else "User"}
+
+
+_PAGES = {
+    "/repos/o/r/issues/1/comments": [
+        {"body": "human note", "user": _user("alice"), "created_at": "2026-04-20T01:00:00Z"},
+        {"body": "bot note", "user": _user("ci-bot", bot=True), "created_at": "2026-04-20T02:00:00Z"},
+        {"body": "   ", "user": _user("alice")},
+    ],
+    "/repos/o/r/pulls/1/comments": [
+        {"body": "inline human", "user": _user("alice"), "path": "a.py", "line": 3},
+        {"body": "inline bot", "user": _user("lint-bot", bot=True), "path": "a.py", "line": 4},
+    ],
+    "/repos/o/r/pulls/1/reviews": [
+        {"state": "APPROVED", "body": "lgtm", "user": _user("bob")},
+        {"state": "COMMENTED", "body": "bot review", "user": _user("review-bot", bot=True)},
+        {"state": "PENDING", "body": "my draft", "user": _user("bob")},
+    ],
+}
+
+
+@pytest.mark.parametrize("no_bots", [False, True])
+def test_comments_and_reviews_are_exported_and_no_bots_drops_bots(monkeypatch, no_bots: bool) -> None:
+    from conftest import install_fake_github
+
+    install_fake_github(monkeypatch, pull={"title": "T", "body": "B"}, pages=_PAGES)
+    out = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md",
+                         quiet=True, no_bots=no_bots).render()
+
+    for human in ("human note", "inline human", "lgtm"):
+        assert human in out
+    assert "my draft" not in out  # PENDING reviews are the author's own drafts
+    for bot in ("bot note", "inline bot", "bot review"):
+        assert (bot in out) is not no_bots

@@ -110,13 +110,6 @@ def test_author_tag_does_not_double_suffix_bot() -> None:
     assert "[bot][bot]" not in out
 
 
-def test_is_bot_filter_opt_in() -> None:
-    dumper_default = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md")
-    dumper_filter = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md", no_bots=True)
-    assert dumper_default.no_bots is False
-    assert dumper_filter.no_bots is True
-
-
 def test_timeline_comment_timestamp_rendered() -> None:
     dumper = _make_dumper()
     raw = _make_raw(timeline_comments=[{
