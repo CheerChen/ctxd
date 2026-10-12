@@ -369,9 +369,9 @@ class TestManifestOutputModes:
 
     def test_manifest_contains_items(self, tmp_path: Path) -> None:
         s = Summary(source="confluence", resources_fetched=3)
-        s.add_item(source_id="1", status="written", title="Page 1")
-        s.add_item(source_id="2", status="skipped", title="Page 2", reason="empty")
-        s.add_item(source_id="3", status="failed", title="Page 3", reason="API error")
+        s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="Page 1"))
+        s.add_export_result(ExportResult(status=PageStatus.SKIPPED, page_id="2", title="Page 2", reason="empty"))
+        s.add_export_result(ExportResult(status=PageStatus.FAILED, page_id="3", title="Page 3", reason="API error"))
 
         manifest_path = s.write_manifest(tmp_path)
         data = json.loads(manifest_path.read_text())

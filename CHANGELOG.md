@@ -14,6 +14,9 @@
 * **Confluence single-page export fetches in parallel** : a page to stdout made its requests one after another — space name, page author, attachments, inline comments, footer comments, then each comment author during rendering — so 0.6.1's new attachments call added straight to wall time (+0.2 s in the baseline). Those five independent calls now go out as one batch and comment authors as a second, both through the existing client caches. Output is byte-identical; measured on real pages 1.05 s → 0.56 s without comments and 1.6 s → 0.96 s with inline comments. Tree exports keep the serial per-page path, since pages already run in parallel and nesting would multiply `--max-concurrency`.
 * **PR output says when the diff has no code** : the default `-d compact` lists file names and hunk ranges and `-d stat` lists files and line counts, so an agent asked to review a PR got no code and could not tell — a 10.6k-line PR came out at 40 KB against 649 KB with `-d full`. Both modes now open the diff section with a line saying no code is included and to re-run with `-d full`, the summary adds `diff mode compact: no code in output (pass -d full)`, and their fence is `text` rather than `diff`, since the content is not a diff. Nothing is added when the PR has no diff. README and the agent skill document when to use `-d full`.
 
+### Removed
+* **Unused modules and `Summary` methods** : `ctxd.formatters` (markdown / text) and `ctxd.confluence.downloader.ImageDownloader` had no caller since the dumpers grew their own rendering and downloads; `Summary.merge`, `Summary.add_item` and `Summary.total` were only reached from tests (`add_export_result` is what the dumpers use). They and the tests that existed only for them are gone.
+
 ## [0.6.1]
 
 ### Fixed

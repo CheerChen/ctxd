@@ -349,36 +349,6 @@ class TestDownloadSizeEnforcement:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: Atomic write failure in compat downloader — temp file cleaned up.
-# ---------------------------------------------------------------------------
-
-class TestDownloaderTempCleanup:
-    def test_downloader_cleans_temp_on_failure(self, tmp_path: Path, monkeypatch) -> None:
-        from ctxd.confluence.downloader import ImageDownloader
-
-        downloader = ImageDownloader(str(tmp_path))
-
-        # Mock session.get to raise during streaming
-        class FakeResp:
-            def raise_for_status(self): pass
-            def iter_content(self, chunk_size=8192):
-                yield b"\x00" * 100
-                raise OSError("network error mid-stream")
-            def close(self): pass
-
-        monkeypatch.setattr(downloader.session, "get", lambda url, **kw: FakeResp())
-
-        result = downloader._download_single("https://example.com/image.png")
-        assert result[1] is None  # Download failed
-
-        # No temp file should be left behind
-        temp_files = list(tmp_path.glob("*.tmp"))
-        assert len(temp_files) == 0, f"Temp files left behind: {temp_files}"
-        # No partial file either
-        assert not (tmp_path / "image.png").exists()
-
-
-# ---------------------------------------------------------------------------
 # Test 8: --max-chars is a hard cap on final output length.
 # ---------------------------------------------------------------------------
 

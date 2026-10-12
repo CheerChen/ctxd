@@ -102,35 +102,8 @@ class Summary:
     notes: list[str] = field(default_factory=list)
     items: list[ItemRecord] = field(default_factory=list)
 
-    def merge(self, other: Summary) -> None:
-        """Merge another summary into this one (in-place)."""
-        self.resources_fetched += other.resources_fetched
-        self.resources_rendered += other.resources_rendered
-        self.artifacts_written += other.artifacts_written
-        self.skipped += other.skipped
-        self.failed += other.failed
-        self.truncated += other.truncated
-        self.notes.extend(other.notes)
-        self.items.extend(other.items)
-
     def add_note(self, note: str) -> None:
         self.notes.append(note)
-
-    def add_item(
-        self,
-        source_id: str = "",
-        status: str = "",
-        title: str = "",
-        reason: str = "",
-    ) -> None:
-        """Record a structured item. Also increments the matching counter."""
-        self.items.append(ItemRecord(source_id=source_id, status=status, title=title, reason=reason))
-        if status == PageStatus.WRITTEN.value:
-            self.resources_rendered += 1
-        elif status == PageStatus.SKIPPED.value:
-            self.skipped += 1
-        elif status == PageStatus.FAILED.value:
-            self.failed += 1
 
     def add_export_result(self, result: ExportResult) -> None:
         """Aggregate an ``ExportResult`` (from a worker) into this summary.
@@ -146,10 +119,6 @@ class Summary:
             self.failed += 1
         self.notes.extend(result.notes)
         self.truncated += result.truncated
-
-    @property
-    def total(self) -> int:
-        return self.resources_rendered + self.skipped + self.failed
 
     def to_stderr_line(self) -> str:
         """One-line summary suitable for stderr."""

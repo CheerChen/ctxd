@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from ctxd.summary import ExportResult, ItemRecord, PageStatus, Summary
+from ctxd.summary import ExportResult, PageStatus, Summary
 
 
 # ---------------------------------------------------------------------------
@@ -17,36 +17,6 @@ from ctxd.summary import ExportResult, ItemRecord, PageStatus, Summary
 # ---------------------------------------------------------------------------
 
 class TestSummaryDataclass:
-    def test_merge_combines_counts_and_notes(self) -> None:
-        a = Summary(resources_fetched=5, resources_rendered=3, failed=2)
-        b = Summary(resources_fetched=10, resources_rendered=7, skipped=1, notes=["x"])
-        a.merge(b)
-        assert a.resources_fetched == 15
-        assert a.resources_rendered == 10
-        assert a.skipped == 1
-        assert a.failed == 2
-        assert a.notes == ["x"]
-
-    def test_merge_combines_items(self) -> None:
-        a = Summary()
-        a.add_item(source_id="1", status="written", title="A")
-        b = Summary()
-        b.add_item(source_id="2", status="failed", title="B", reason="err")
-        a.merge(b)
-        assert len(a.items) == 2
-        assert a.resources_rendered == 1
-        assert a.failed == 1
-
-    def test_add_item_increments_counter(self) -> None:
-        s = Summary()
-        s.add_item(source_id="1", status="written", title="A")
-        s.add_item(source_id="2", status="skipped", title="B", reason="empty")
-        s.add_item(source_id="3", status="failed", title="C", reason="err")
-        assert s.resources_rendered == 1
-        assert s.skipped == 1
-        assert s.failed == 1
-        assert len(s.items) == 3
-
     def test_add_export_result_aggregates(self) -> None:
         s = Summary()
         s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="A"))
@@ -58,13 +28,9 @@ class TestSummaryDataclass:
         assert len(s.items) == 3
         assert "note1" in s.notes
 
-    def test_total(self) -> None:
-        s = Summary(resources_rendered=3, skipped=2, failed=1)
-        assert s.total == 6
-
     def test_to_dict_roundtrip(self) -> None:
         s = Summary(source="confluence", resources_fetched=5, resources_rendered=3, skipped=1, failed=1)
-        s.add_item(source_id="1", status="written", title="A")
+        s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="A"))
         d = s.to_dict()
         assert d["source"] == "confluence"
         assert d["resources_fetched"] == 5
