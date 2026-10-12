@@ -1,150 +1,82 @@
-"""Tests for Summary dataclass behavior and recurse summary tracking.
+"""Run diagnostics: the summary line, the manifest, and log vs warn.
 
-Low-value tests (enum string values, isinstance, defaults-are-zero) have
-been removed.  Manifest and Confluence page-status integration tests live
-in ``test_summary_integration.py``.
+Dumper-specific never-silent paths (a failed lookup or download warns and
+is counted) are tested next to each dumper; real dump() / CLI runs that
+write a manifest are in test_e2e.py.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from ctxd.dumpers.base import BaseDumper
 from ctxd.summary import ExportResult, PageStatus, Summary
 
 
-# ---------------------------------------------------------------------------
-# Summary dataclass — behavior tests with real logic
-# ---------------------------------------------------------------------------
+def test_add_export_result_counts_each_status_and_keeps_notes() -> None:
+    s = Summary()
+    s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="A"))
+    s.add_export_result(ExportResult(status=PageStatus.SKIPPED, page_id="2", title="B", reason="empty"))
+    s.add_export_result(ExportResult(status=PageStatus.FAILED, page_id="3", title="C", reason="err", notes=["note1"]))
 
-class TestSummaryDataclass:
-    def test_add_export_result_aggregates(self) -> None:
-        s = Summary()
-        s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="A"))
-        s.add_export_result(ExportResult(status=PageStatus.SKIPPED, page_id="2", title="B", reason="empty"))
-        s.add_export_result(ExportResult(status=PageStatus.FAILED, page_id="3", title="C", reason="err", notes=["note1"]))
-        assert s.resources_rendered == 1
-        assert s.skipped == 1
-        assert s.failed == 1
-        assert len(s.items) == 3
-        assert "note1" in s.notes
-
-    def test_to_dict_roundtrip(self) -> None:
-        s = Summary(source="confluence", resources_fetched=5, resources_rendered=3, skipped=1, failed=1)
-        s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="A"))
-        d = s.to_dict()
-        assert d["source"] == "confluence"
-        assert d["resources_fetched"] == 5
-        assert len(d["items"]) == 1
-        assert d["items"][0]["source_id"] == "1"
-
-    def test_to_stderr_line_includes_nonzero_counts(self) -> None:
-        s = Summary(source="confluence", resources_fetched=5, resources_rendered=3, skipped=1, failed=1, truncated=2)
-        line = s.to_stderr_line()
-        assert "source=confluence" in line
-        assert "fetched=5" in line
-        assert "rendered=3" in line
-        assert "artifacts=0" in line
-        assert "skipped=1" in line
-        assert "failed=1" in line
-        assert "truncated=2" in line
-
-    def test_to_stderr_line_omits_zero_counts(self) -> None:
-        s = Summary(source="github_pr", resources_fetched=1, resources_rendered=1, artifacts_written=1)
-        line = s.to_stderr_line()
-        assert "skipped" not in line
-        assert "failed" not in line
-        assert "truncated" not in line
-
-    def test_emit_prints_to_stderr(self, capsys: pytest.CaptureFixture) -> None:
-        s = Summary(source="slack_thread", resources_fetched=10, resources_rendered=1)
-        s.emit()
-        captured = capsys.readouterr()
-        assert "source=slack_thread" in captured.err
-        assert "fetched=10" in captured.err
+    assert (s.resources_rendered, s.skipped, s.failed) == (1, 1, 1)
+    assert [i.status for i in s.items] == ["written", "skipped", "failed"]
+    assert s.notes == ["note1"]
 
 
-# ---------------------------------------------------------------------------
-# Recurse summary tracking
-# ---------------------------------------------------------------------------
+def test_stderr_line_lists_nonzero_counts_only(capsys: pytest.CaptureFixture) -> None:
+    busy = Summary(source="confluence", resources_fetched=5, resources_rendered=3, skipped=1, failed=1, truncated=2)
+    quiet = Summary(source="github_pr", resources_fetched=1, resources_rendered=1, artifacts_written=1)
 
-class TestRecurseSummary:
-    def test_truncated_count_in_summary(self, monkeypatch) -> None:
-        from ctxd.recurse import MAX_CHILDREN_PER_LEVEL, render_with_recurse
+    line = busy.to_stderr_line()
+    for part in ("source=confluence", "fetched=5", "rendered=3", "artifacts=0", "skipped=1", "failed=1", "truncated=2"):
+        assert part in line
+    assert not any(k in quiet.to_stderr_line() for k in ("skipped", "failed", "truncated"))
 
-        parent_url = "https://app.slack.com/client/T/C/thread/C-123.456"
-        child_urls = [
-            f"https://site.atlassian.net/browse/PROJ-{i}"
-            for i in range(MAX_CHILDREN_PER_LEVEL + 3)
-        ]
-        parent_content = "See " + " ".join(child_urls) + "\n"
+    busy.emit()
+    assert "source=confluence" in capsys.readouterr().err
 
-        class FakeDumper:
-            def __init__(self, url, content="content\n", fail=None):
-                self.url = url
-                self.output = None
-                self.fmt = "md"
-                self.quiet = True
-                self.verbose = False
-                self.summary = Summary()
-                self._content = content
-                self._fail = fail
 
-            def render(self):
-                if self._fail:
-                    raise self._fail
-                return self._content
+@pytest.mark.parametrize("target, expected_name", [
+    ("pr-1.md", "pr-1.md.manifest.json"),   # file output: manifest beside it
+    ("export/", "manifest.json"),           # directory output: manifest inside
+])
+def test_manifest_placement_and_content(tmp_path: Path, target: str, expected_name: str) -> None:
+    out = tmp_path / target
+    if target.endswith("/"):
+        out.mkdir()
+    else:
+        out.write_text("content", encoding="utf-8")
+    s = Summary(source="confluence", resources_fetched=3)
+    s.add_export_result(ExportResult(status=PageStatus.WRITTEN, page_id="1", title="Page 1"))
+    s.add_export_result(ExportResult(status=PageStatus.FAILED, page_id="3", title="Page 3", reason="API error"))
 
-            def log(self, msg): pass
+    manifest = s.write_manifest(out)
 
-        dumper = FakeDumper(url=parent_url, content=parent_content)
+    assert manifest.name == expected_name and manifest.parent == (out if out.is_dir() else out.parent)
+    data = json.loads(manifest.read_text())
+    assert data["source"] == "confluence" and data["resources_fetched"] == 3
+    assert {i["source_id"]: i["reason"] for i in data["items"]} == {"1": "", "3": "API error"}
+    assert not list(manifest.parent.glob("*.tmp"))
 
-        def factory(url, opts):
-            return FakeDumper(url=url, content=f"content {url}\n")
 
-        monkeypatch.setattr("ctxd.recurse._build_dumper", factory)
-        render_with_recurse(dumper, depth=1)
+class _Dumper(BaseDumper):
+    def validate_auth(self) -> None: ...
+    def fetch(self) -> dict: return {}
+    def transform(self, raw: dict) -> str: return ""
+    def default_filename(self) -> str: return "x.txt"
 
-        assert dumper.summary.truncated == 3
-        # 1 (primary) + MAX_CHILDREN_PER_LEVEL (children) fetched/rendered
-        assert dumper.summary.resources_rendered == 1 + MAX_CHILDREN_PER_LEVEL
-        assert dumper.summary.resources_fetched == 1 + MAX_CHILDREN_PER_LEVEL
-        # Recursion embeds all content into one artifact.
-        assert dumper.summary.artifacts_written == 0  # CLI sets it to 1
 
-    def test_failed_child_in_summary(self, monkeypatch) -> None:
-        from ctxd.recurse import render_with_recurse
+@pytest.mark.parametrize("method, quiet, visible", [
+    ("log", False, True),
+    ("log", True, False),    # progress is silenced by --quiet
+    ("warn", False, True),
+    ("warn", True, True),    # diagnostics never are
+])
+def test_quiet_silences_log_but_never_warn(capsys, method: str, quiet: bool, visible: bool) -> None:
+    getattr(_Dumper(url="x", output=None, fmt="md", quiet=quiet), method)("message")
 
-        parent_url = "https://app.slack.com/client/T/C/thread/C-123.456"
-        child_url = "https://site.atlassian.net/browse/PROJ-1"
-        parent_content = f"See {child_url}\n"
-
-        class FakeDumper:
-            def __init__(self, url, content="content\n", fail=None):
-                self.url = url
-                self.output = None
-                self.fmt = "md"
-                self.quiet = True
-                self.verbose = False
-                self.summary = Summary()
-                self._content = content
-                self._fail = fail
-
-            def render(self):
-                if self._fail:
-                    raise self._fail
-                return self._content
-
-            def log(self, msg): pass
-
-        dumper = FakeDumper(url=parent_url, content=parent_content)
-
-        def factory(url, opts):
-            return FakeDumper(url=url, fail=RuntimeError("boom"))
-
-        monkeypatch.setattr("ctxd.recurse._build_dumper", factory)
-        render_with_recurse(dumper, depth=1)
-
-        assert dumper.summary.failed == 1
-        # Primary resource still counts as rendered even if child failed.
-        assert dumper.summary.resources_rendered == 1
-        assert any("boom" in note for note in dumper.summary.notes)
+    assert ("message" in capsys.readouterr().err) is visible

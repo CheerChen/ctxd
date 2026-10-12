@@ -164,6 +164,14 @@ def test_child_error_skipped_not_raised(monkeypatch, exc, expected_msg) -> None:
     assert f"recursed from {child_url}" in result
     assert "skipped" in result
     assert expected_msg in result
+    # A missing credential is a skip; anything else is a failure. Either way
+    # the primary resource still counts as rendered.
+    if isinstance(exc, AuthError):
+        assert (dumper.summary.skipped, dumper.summary.failed) == (1, 0)
+    else:
+        assert (dumper.summary.skipped, dumper.summary.failed) == (0, 1)
+    assert dumper.summary.resources_rendered == 1
+    assert any(expected_msg in note for note in dumper.summary.notes)
 
 
 def test_seen_dedup_across_levels(monkeypatch) -> None:
@@ -203,6 +211,10 @@ def test_child_cap_truncation(monkeypatch) -> None:
     # Exactly MAX_CHILDREN_PER_LEVEL rendered + 1 truncation notice
     assert len(recurse_markers) == MAX_CHILDREN_PER_LEVEL
     assert len(truncation_markers) == 1
+    assert dumper.summary.truncated == 3
+    assert dumper.summary.resources_fetched == dumper.summary.resources_rendered == 1 + MAX_CHILDREN_PER_LEVEL
+    # Children are embedded into the parent's artifact; the CLI counts it.
+    assert dumper.summary.artifacts_written == 0
 
 
 def test_no_supported_urls_returns_unchanged(monkeypatch) -> None:
@@ -236,3 +248,24 @@ def test_depth_two_nested_recursion(monkeypatch) -> None:
     assert f"recursed from {grandchild_url}" in result
     # Grandchild should have nested numbering [1.1]
     assert "[1.1]" in result
+
+
+def test_depth_two_failures_and_truncation_reach_the_root_summary(monkeypatch) -> None:
+    parent_url = "https://app.slack.com/client/T/C/thread/C-123.456"
+    child_url = "https://site.atlassian.net/browse/PROJ-1"
+    grandchild_urls = [f"https://github.com/owner/repo/pull/{i}" for i in range(MAX_CHILDREN_PER_LEVEL + 2)]
+
+    dumper = _FakeDumper(url=parent_url, content=f"See {child_url}\n")
+    factory = _make_factory(
+        {child_url: "See " + " ".join(grandchild_urls) + "\n"},
+        fails={grandchild_urls[0]: RuntimeError("grandchild boom")},
+    )
+    monkeypatch.setattr("ctxd.recurse._build_dumper", factory)
+
+    render_with_recurse(dumper, depth=2)
+
+    assert dumper.summary.failed == 1
+    assert dumper.summary.truncated == 2
+    # parent + child + the grandchildren that rendered
+    assert dumper.summary.resources_rendered == 2 + MAX_CHILDREN_PER_LEVEL - 1
+    assert any("grandchild boom" in note for note in dumper.summary.notes)

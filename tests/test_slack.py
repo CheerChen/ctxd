@@ -82,13 +82,15 @@ def test_download_files_always_appends_file_id(monkeypatch, tmp_path) -> None:
     assert downloaded == ["IMG_F0AAAAAAA5.jpg"]
 
 
-def test_download_files_rejects_html_response(monkeypatch, tmp_path) -> None:
+def test_download_files_rejects_html_response(monkeypatch, tmp_path, capsys) -> None:
     """When the token lacks files:read scope, Slack returns an HTML login
-    page with HTTP 200. We must not save that as if it were the file."""
+    page with HTTP 200. We must not save that as if it were the file, and
+    the warning must survive --quiet."""
     dumper = SlackDumper(
         url="https://example.slack.com/archives/C123/p1735881234123456",
         output=None,
         fmt="md",
+        quiet=True,
         download_files=True,
     )
 
@@ -111,6 +113,7 @@ def test_download_files_rejects_html_response(monkeypatch, tmp_path) -> None:
     attachment_dir = tmp_path / "attachments"
     # No file should be saved when the response is HTML.
     assert not attachment_dir.exists() or not list(attachment_dir.iterdir())
+    assert "got HTML instead of binary" in capsys.readouterr().err
 
 
 def test_transform_markdown_includes_channel_and_thread_urls(monkeypatch) -> None:
@@ -436,3 +439,59 @@ def test_fetch_resolves_users_and_channel_concurrently(monkeypatch) -> None:
     assert {uid: u["name"] for uid, u in dumper._user_cache.items()} == {
         "U1": "name-U1", "U2": "name-U2", "U3": "name-U3",
     }
+
+
+# ---------------------------------------------------------------------------
+# Never silent: lookups and downloads that fail warn under --quiet and count
+# ---------------------------------------------------------------------------
+
+def _raises(exc: Exception):
+    def fail(*args, **kwargs):
+        raise exc
+    return fail
+
+
+def _quiet_dumper() -> SlackDumper:
+    d = SlackDumper(url="https://app.slack.com/client/T123/C123/thread/C123-1234567890.123456",
+                    output=None, fmt="md", quiet=True)
+    d.token = "xoxp-fake"
+    return d
+
+
+@pytest.mark.parametrize("lookup, arg, fallback, message", [
+    ("_get_user", "U123", {"id": "U123", "name": "U123"}, "failed to resolve user U123"),
+    ("_get_channel_name", "C123", "C123", "failed to resolve channel C123"),
+])
+def test_failed_lookup_falls_back_to_the_id_and_warns(monkeypatch, capsys, lookup, arg, fallback, message) -> None:
+    d = _quiet_dumper()
+    monkeypatch.setattr(d, "_api_call", _raises(RuntimeError("boom")))
+
+    result = getattr(d, lookup)(arg)
+
+    if isinstance(fallback, dict):
+        assert {k: result[k] for k in fallback} == fallback
+    else:
+        assert result == fallback
+    err = capsys.readouterr().err
+    assert message in err and "boom" in err
+
+
+def test_failed_download_warns_and_counts_as_failed(monkeypatch, capsys, tmp_path) -> None:
+    d = _quiet_dumper()
+    monkeypatch.setattr(d.session, "get", _raises(RuntimeError("network error")))
+
+    d._download_files([{"url_private_download": "https://files.slack.com/x", "name": "test.png", "id": "F1"}], tmp_path)
+
+    err = capsys.readouterr().err
+    assert "Failed to download test.png" in err and "network error" in err
+    assert d.summary.failed == 1
+
+
+def test_file_without_download_url_warns_and_counts_as_skipped(capsys, tmp_path) -> None:
+    d = _quiet_dumper()
+
+    d._download_files([{"name": "orphan.txt", "id": "F2"}], tmp_path)
+
+    assert "no download URL" in capsys.readouterr().err
+    assert d.summary.skipped == 1
+    assert any("orphan.txt" in note for note in d.summary.notes)

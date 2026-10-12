@@ -2,7 +2,7 @@
 
 Principle: keep real orchestration (cli.main, Dumper.dump(), render_with_recurse,
 _emit_and_manifest, file/summary aggregation).  Only mock external boundaries
-(auth, API client methods, subprocess.run for gh).
+(auth and the API clients).
 
 Validity check: if you delete _emit_and_manifest(), delete add_export_result(),
 or change warn() to log(), these tests MUST fail.
@@ -99,6 +99,38 @@ class TestConfluenceDirectoryExportReal:
         assert items_by_id["2"]["reason"] == "empty page body"
         assert items_by_id["3"]["status"] == "failed"
         assert "API error" in items_by_id["3"]["reason"]
+
+
+    def test_many_pages_in_parallel_keep_exact_counts(self, tmp_path: Path, monkeypatch) -> None:
+        """Workers return results and the main thread aggregates them, so
+        concurrent pages cannot lose an increment."""
+        from ctxd.concurrency import configure
+        from ctxd.dumpers.confluence import ConfluenceDumper
+
+        d = ConfluenceDumper(
+            url="https://test.atlassian.net/wiki/spaces/ABC/pages/123/Root",
+            output=str(tmp_path / "export"), fmt="md", recursive=True,
+        )
+        monkeypatch.setattr(d, "validate_auth", lambda: None)
+        monkeypatch.setattr(d, "_resolve_short_link", lambda: None)
+        d.client = MagicMock()
+        d.client.base_url = "https://test.atlassian.net"
+        body = {"storage": {"value": "<p>c</p>"}}
+        d.client.get_page = MagicMock(return_value={"id": "123", "title": "Root", "body": body})
+        d.client.get_descendants = MagicMock(return_value=[
+            {"id": str(i), "title": f"Page{i}", "body": body} for i in range(20)
+        ])
+        for name in ("get_inline_comments", "get_footer_comments", "get_attachments"):
+            setattr(d.client, name, MagicMock(return_value=[]))
+        d.client.get_space_name = MagicMock(return_value="S")
+        d.client.get_user_display_name = MagicMock(return_value="A")
+        configure(max_concurrency=5)
+
+        d.dump()
+
+        data = json.loads((tmp_path / "export" / "manifest.json").read_text())
+        assert (data["resources_rendered"], data["skipped"], data["failed"]) == (21, 0, 0)
+        assert len({item["source_id"] for item in data["items"]}) == 21
 
 
 # ---------------------------------------------------------------------------
