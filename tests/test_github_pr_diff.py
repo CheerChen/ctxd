@@ -76,3 +76,14 @@ def test_stat_diff_empty_returns_placeholder(monkeypatch) -> None:
     dumper = _make_dumper("stat")
     monkeypatch.setattr(dumper, "_paginate", lambda path: [])
     assert dumper._generate_diff() == GitHubPRDumper._NO_DIFF
+
+
+def test_empty_diff_is_noted_in_the_summary(monkeypatch) -> None:
+    from conftest import install_fake_github
+
+    install_fake_github(monkeypatch, pull={"title": "T", "body": "B"})  # no diff
+    dumper = GitHubPRDumper(url="https://github.com/o/r/pull/1", output=None, fmt="md", quiet=True)
+
+    dumper.render()
+
+    assert "diff: no differences or fetch error" in dumper.summary.notes
