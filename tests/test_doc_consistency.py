@@ -1,10 +1,10 @@
-"""Verify that README / SKILL documentation stays consistent with CLI defaults.
+"""README / README_CN / SKILL must not contradict the CLI's actual defaults.
 
-This test extracts default values from the Click command parameters and
-checks that the documentation files do not contradict them.  It catches the
-class of drift that happened in v0.4.3 when ``--recurse-depth`` default
-changed from 1 to 0 but the prose in the Cross-source recursion section was
-not updated.
+Each option's default is read from the Click command and rendered into the
+phrase its options-table row is expected to carry, so changing a default
+fails here until both READMEs say the new value.  The recursion section
+check exists because v0.4.3 changed ``--recurse-depth`` from 1 to 0 while
+the prose still described recursion as on.
 """
 
 from __future__ import annotations
@@ -18,237 +18,68 @@ from click.testing import CliRunner
 from ctxd.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
-README = ROOT / "README.md"
-README_CN = ROOT / "README_CN.md"
-SKILL = ROOT / "skills" / "ctxd" / "SKILL.md"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _cli_defaults() -> dict[str, object]:
-    """Return ``{param_name: default}`` for every option on the CLI."""
-    defaults: dict[str, object] = {}
-    for param in main.params:
-        name = param.name
-        if name is None:
-            continue
-        defaults[name] = param.default
-    return defaults
-
-
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Fixture
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def defaults() -> dict[str, object]:
-    return _cli_defaults()
-
-
-@pytest.fixture(scope="module")
-def readme_text() -> str:
-    return _read(README)
-
-
-@pytest.fixture(scope="module")
-def readme_cn_text() -> str:
-    return _read(README_CN)
-
-
-@pytest.fixture(scope="module")
-def skill_text() -> str:
-    return _read(SKILL)
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-class TestRecurseDepthDefault:
-    """``--recurse-depth`` default is 0 (off). Docs must state this explicitly."""
-
-    @pytest.fixture
-    def expected(self, defaults: dict[str, object]) -> int:
-        return int(defaults["recurse_depth"])  # type: ignore[arg-type]
-
-    def test_default_is_off(self, expected: int) -> None:
-        assert expected == 0, "if this changes, update the tests below too"
-
-    def test_readme_states_off_by_default(self, readme_text: str) -> None:
-        """The Cross-source recursion section must contain an explicit
-        default-off statement — not merely the word 'off' somewhere.
-
-        Accepts either ``off by default`` or ``by default ... off`` (within
-        the same sentence), but rejects text that only contains ``off`` in
-        an unrelated context (e.g. ``--no-recurse to turn it off``).
-        """
-        recursion_section = _extract_section(readme_text, "Cross-source recursion")
-        assert recursion_section, "Section 'Cross-source recursion' not found"
-        # Must contain an explicit default-off declaration.
-        has_off_by_default = bool(re.search(r"off by default", recursion_section, re.IGNORECASE))
-        has_by_default_off = bool(re.search(r"by default.{0,40}off", recursion_section, re.IGNORECASE))
-        assert has_off_by_default or has_by_default_off, (
-            "Missing explicit default-off statement in recursion section"
-        )
-        # Must not contain the old prose that implied recursion was on.
-        assert "By default, `ctxd` scans" not in recursion_section
-
-    def test_readme_no_depth_1_default(self, readme_text: str) -> None:
-        recursion_section = _extract_section(readme_text, "Cross-source recursion")
-        # The old comment said "# Default: depth=1" — that was wrong.
-        assert "Default: depth=1" not in recursion_section
-
-    def test_readme_cn_states_off_by_default(self, readme_cn_text: str) -> None:
-        """中文文档的跨源递归章节必须包含明确的默认关闭声明。
-
-        接受「默认关闭」或「默认...关闭」句式，但拒绝仅在无关上下文
-        出现「关闭」的文档（如「--no-recurse 关闭」）。
-        """
-        recursion_section = _extract_section(readme_cn_text, "跨源递归")
-        assert recursion_section, "Section '跨源递归' not found"
-        has_default_off = "默认关闭" in recursion_section
-        has_default_context_off = bool(re.search(r"默认.{0,20}关闭", recursion_section))
-        assert has_default_off or has_default_context_off, (
-            "Missing explicit default-off statement in recursion section"
-        )
-        assert "默认情况下，`ctxd` 会扫描" not in recursion_section
-
-    def test_readme_cn_no_depth_1_default(self, readme_cn_text: str) -> None:
-        recursion_section = _extract_section(readme_cn_text, "跨源递归")
-        assert "默认 depth=1" not in recursion_section
-
-    def test_skill_states_off_by_default(self, skill_text: str) -> None:
-        assert "recursion is on by default" not in skill_text
-        assert "off by default" in skill_text
-
-    def test_readme_global_options_table(self, readme_text: str) -> None:
-        # The Global Options table should say default 0=off
-        assert "default: `0`=off" in readme_text or "default: 0=off" in readme_text
-
-    def test_readme_cn_global_options_table(self, readme_cn_text: str) -> None:
-        assert "默认 `0`=关闭" in readme_cn_text or "默认 0=关闭" in readme_cn_text
-
-
-class TestConfluenceRecursiveDefault:
-    """``--recursive`` default is False (off)."""
-
-    def test_default_is_off(self, defaults: dict[str, object]) -> None:
-        assert defaults["recursive"] is False
-
-    def test_readme_says_off(self, readme_text: str) -> None:
-        # In the Confluence options table
-        assert "Include every descendant page, at any depth (default: off)" in readme_text
-
-    def test_readme_cn_says_off(self, readme_cn_text: str) -> None:
-        assert "包含任意深度的全部子孙页面（默认关闭）" in readme_cn_text
-
-
-class TestIncludeImagesDefault:
-    """``--include-images`` default is False (off)."""
-
-    def test_default_is_off(self, defaults: dict[str, object]) -> None:
-        assert defaults["include_images"] is False
-
-    def test_readme_says_off(self, readme_text: str) -> None:
-        assert "Download referenced images (default: off)" in readme_text
-
-    def test_readme_cn_says_off(self, readme_cn_text: str) -> None:
-        assert "下载正文引用的图片（默认关闭）" in readme_cn_text
-
-
-class TestFormatDefault:
-    """``--format`` default is ``md``."""
-
-    def test_default_is_md(self, defaults: dict[str, object]) -> None:
-        assert defaults["fmt"] == "md"
-
-    def test_readme_says_md(self, readme_text: str) -> None:
-        assert "default: `md`" in readme_text or "default: md" in readme_text
-
-    def test_readme_cn_says_md(self, readme_cn_text: str) -> None:
-        assert "默认 `md`" in readme_cn_text
-
-
-class TestDiffModeDefault:
-    """``--diff-mode`` default is ``compact``."""
-
-    def test_default_is_compact(self, defaults: dict[str, object]) -> None:
-        assert defaults["diff_mode"] == "compact"
-
-    def test_readme_says_compact(self, readme_text: str) -> None:
-        assert "default: `compact`" in readme_text or "default: compact" in readme_text
-
-    def test_readme_cn_says_compact(self, readme_cn_text: str) -> None:
-        assert "默认 `compact`" in readme_cn_text
-
-
-class TestMaxConcurrencyDefault:
-    """``--max-concurrency`` default is 5."""
-
-    def test_default_is_5(self, defaults: dict[str, object]) -> None:
-        assert defaults["max_concurrency"] == 5
-
-    def test_readme_says_5(self, readme_text: str) -> None:
-        assert "default: `5`" in readme_text or "default: 5" in readme_text
-
-    def test_readme_cn_says_5(self, readme_cn_text: str) -> None:
-        assert "默认 `5`" in readme_cn_text
-
-
-class TestCleanBodyDefault:
-    """``--clean-body`` default is True (on)."""
-
-    def test_default_is_on(self, defaults: dict[str, object]) -> None:
-        assert defaults["clean_body"] is True
-
-    def test_readme_says_on(self, readme_text: str) -> None:
-        assert "default: on" in readme_text
-
-    def test_readme_cn_says_on(self, readme_cn_text: str) -> None:
-        assert "默认开启" in readme_cn_text
-
-
-class TestNoBotsDefault:
-    """``--no-bots`` default is False (bots kept by default)."""
-
-    def test_default_is_false(self, defaults: dict[str, object]) -> None:
-        assert defaults["no_bots"] is False
-
-    def test_readme_says_keep(self, readme_text: str) -> None:
-        assert "default: keep all bots" in readme_text
-
-    def test_readme_cn_says_keep(self, readme_cn_text: str) -> None:
-        assert "默认全部保留" in readme_cn_text
-
-
-class TestCliHelpMatchesParams:
-    """``ctxd --help`` output should list every option without error."""
-
-    def test_help_exits_zero(self) -> None:
-        result = CliRunner().invoke(main, ["--help"])
-        assert result.exit_code == 0
-        assert "Usage:" in result.output
-
-
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
-
-def _extract_section(text: str, heading: str) -> str:
-    """Return the text between *heading* and the next same-level heading."""
-    pattern = rf"^##\s+{re.escape(heading)}\s*$"
-    match = re.search(pattern, text, re.MULTILINE)
-    if not match:
-        return ""
-    start = match.end()
-    # Find the next ## heading (or end of file)
-    next_heading = re.search(r"^##\s+", text[start:], re.MULTILINE)
-    if next_heading:
-        return text[start : start + next_heading.start()]
-    return text[start:]
+DOCS = {
+    "en": (ROOT / "README.md").read_text(encoding="utf-8"),
+    "cn": (ROOT / "README_CN.md").read_text(encoding="utf-8"),
+}
+SKILL = (ROOT / "skills" / "ctxd" / "SKILL.md").read_text(encoding="utf-8")
+DEFAULTS = {p.name: p.default for p in main.params if p.name}
+
+_ON_OFF = {"en": {True: "default: on", False: "default: off"}, "cn": {True: "默认开启", False: "默认关闭"}}
+
+# (click param, flag as written in the options table, phrase per language).
+# A phrase is a format string taking the CLI default, or None to use the
+# on/off wording for a boolean.
+OPTIONS = [
+    ("fmt", "--format", {"en": "default: `{}`", "cn": "默认 `{}`"}),
+    ("diff_mode", "--diff-mode", {"en": "default: `{}`", "cn": "默认 `{}`"}),
+    ("max_concurrency", "--max-concurrency", {"en": "default: `{}`", "cn": "默认 `{}`"}),
+    ("recurse_depth", "--recurse-depth", {"en": "default: `{}`=off", "cn": "默认 `{}`=关闭"}),
+    ("recursive", "--recursive", None),
+    ("include_images", "--include-images", None),
+    ("clean_body", "--clean-body", None),
+    ("no_bots", "--no-bots", {"en": "default: keep all bots", "cn": "默认全部保留"}),
+]
+
+
+def _table_rows(text: str, flag: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith("| `") and flag in line.split("|")[1]]
+
+
+@pytest.mark.parametrize("lang", ["en", "cn"])
+@pytest.mark.parametrize("param, flag, phrases", OPTIONS, ids=[o[0] for o in OPTIONS])
+def test_options_table_states_the_cli_default(param: str, flag: str, phrases, lang: str) -> None:
+    default = DEFAULTS[param]
+    expected = _ON_OFF[lang][default] if phrases is None else phrases[lang].format(default)
+    rows = _table_rows(DOCS[lang], flag)
+
+    assert rows, f"no options-table row for {flag} in README ({lang})"
+    for row in rows:
+        assert expected in row, f"{flag} default is {default!r}; row says: {row}"
+
+
+@pytest.mark.parametrize("lang, heading, default_off, stale", [
+    ("en", "Cross-source recursion", r"off by default|by default.{0,40}off", ["By default, `ctxd` scans", "Default: depth=1"]),
+    ("cn", "跨源递归", r"默认.{0,20}关闭", ["默认情况下，`ctxd` 会扫描", "默认 depth=1"]),
+])
+def test_recursion_section_says_off_by_default(lang, heading, default_off, stale) -> None:
+    assert DEFAULTS["recurse_depth"] == 0, "recursion became default-on: rewrite this section check"
+    match = re.search(rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)", DOCS[lang], re.M | re.S)
+
+    assert match, f"section {heading!r} not found"
+    section = match.group(1)
+    assert re.search(default_off, section, re.IGNORECASE), "no explicit default-off statement"
+    for phrase in stale:
+        assert phrase not in section
+
+
+def test_skill_says_recursion_is_off_by_default() -> None:
+    assert "off by default" in SKILL
+    assert "recursion is on by default" not in SKILL
+
+
+def test_help_renders() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
