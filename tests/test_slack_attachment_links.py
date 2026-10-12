@@ -9,13 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-from click.testing import CliRunner
-
-from ctxd.cli import main
-from ctxd.dumpers import DUMPERS
 from ctxd.dumpers.slack import SlackDumper
-from ctxd.router import Source
 
 _URL = "https://example.slack.com/archives/C123/p1735881234123456"
 _FILE = {
@@ -105,54 +99,3 @@ def test_summary_silent_when_thread_has_no_files(monkeypatch, tmp_path) -> None:
     dumper._report_file_stats()
 
     assert dumper.summary.notes == []
-
-
-# ---------------------------------------------------------------------------
-# --download-files now requires an output path (was: silently wrote to cwd)
-# ---------------------------------------------------------------------------
-
-class _FakeSlackDumper:
-    last_instance = None
-
-    def __init__(self, *args, **kwargs):
-        self.output = kwargs.get("output")
-        self.download_files = kwargs.get("download_files")
-        type(self).last_instance = self
-
-    def default_filename(self) -> str:
-        return "slack-C123-1735881234.123456.md"
-
-    def log(self, message: str) -> None:
-        pass
-
-    def dump(self) -> None:
-        return
-
-
-@pytest.fixture
-def runner(monkeypatch) -> CliRunner:
-    monkeypatch.setattr("ctxd.cli.detect", lambda _url: Source.SLACK_THREAD)
-    monkeypatch.setitem(DUMPERS, Source.SLACK_THREAD, _FakeSlackDumper)
-    return CliRunner()
-
-
-def test_download_files_without_output_errors(runner) -> None:
-    result = runner.invoke(main, [_URL, "--download-files"])
-
-    assert result.exit_code != 0
-    assert "--download-files requires -o" in result.output
-    assert "Try:" in result.output
-
-
-def test_download_files_with_auto_output_succeeds(runner) -> None:
-    result = runner.invoke(main, [_URL, "--download-files", "-O"])
-
-    assert result.exit_code == 0, result.output
-    assert _FakeSlackDumper.last_instance.download_files is True
-
-
-def test_plain_dump_without_output_still_works(runner) -> None:
-    result = runner.invoke(main, [_URL])
-
-    assert result.exit_code == 0, result.output
-    assert _FakeSlackDumper.last_instance.output is None

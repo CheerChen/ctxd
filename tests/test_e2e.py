@@ -11,11 +11,9 @@ or change warn() to log(), these tests MUST fail.
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 from click.testing import CliRunner
 
 from conftest import install_fake_github
