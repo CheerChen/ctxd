@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.2]
 
 ### Added
 * **Jira Service Management requests** : a request raised through a service desk portal failed with `404` when the caller is only its customer, because the platform API needs Browse permission, and the portal link (`/servicedesk/customer/portal/<id>/<KEY>`) was rejected as an unsupported URL. Portal links now route to the Jira dumper. On a platform-API 404 the request is read through `/rest/servicedeskapi/request/{key}` (with its comments and attachments) only when the URL is a portal link or the project is one of the caller's visible service desks; the 404 body is identical for a missing and a hidden issue, so the decision is made per project. The visible service desks are listed once and cached for 24 h in `~/.cache/ctxd/`, so a genuine 404 in an ordinary project still costs one request, as before. Fields the portal does not expose render as `(not visible in portal)` rather than `Unassigned` / `None`, and the summary states the export is the customer view (public comments only). Portal attachment URLs are recognised for `-i` and link rewriting. The platform API is still tried first, so an agent of the desk keeps internal comments and custom fields.
