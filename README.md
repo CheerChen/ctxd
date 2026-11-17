@@ -2,48 +2,60 @@
 
 Turn work URLs into LLM-ready Markdown.
 
-**📖 [中文文档](README_CN.md)**
+**📖 [中文文档](README_CN.md) · [Auth Setup](docs/auth.md) · [CLI Reference](docs/cli.md)**
 
 ![ctxd overview](assets/ctxd-overview.svg)
 
-GitHub PRs, Slack threads, Confluence pages, and Jira issues — one command, one Markdown file you can save, diff, or feed to a model.
-
-## Agent skill (recommended)
-
-ctxd ships a companion skill at [skills/ctxd/SKILL.md](skills/ctxd/SKILL.md) that works with both **Claude Code** and **Codex CLI**. It teaches the agent to reach for `ctxd` whenever a supported URL appears in the conversation, instead of falling back to chat-style fetching or in-model connectors.
-
-```bash
-# Claude Code
-mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
-
-# Codex CLI
-mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
-```
-
-The skill assumes [Required config](#required-config) is already set up — if credentials are missing, the agent will tell you which key it needs before attempting a fetch.
+GitHub PRs, Slack threads, Confluence pages, and Jira issues — one command, one Markdown artifact you can save, diff, or feed to a model.
 
 ## Why ctxd
 
-- **CLI-first, not chat-first** — one command produces a stable Markdown artifact you can inspect, diff, archive, or feed into any model. No drip-feeding through many tool calls.
+- **CLI-first, not chat-first** — one command produces a stable local artifact instead of drip-feeding context across many in-model connector calls.
 - **Comments and metadata stay attached** — PR reviews and inline threads, Slack threading, Confluence attachments and page metadata, Jira custom fields all preserved.
-- **Bulk export is the default** — page trees, long threads, heavy PRs come out as one file. Parallel fetch across all sources (see [Performance](#performance) for numbers).
-- **Never silent on data loss** — fetch failures, skipped items, and truncations always warn on stderr and show up in the run summary / `manifest.json`, even under `-q`.
+- **Bulk export by default** — whole Confluence page trees, long Slack threads, and heavy PRs export in parallel (see [`bench/results/`](bench/results/) for measured numbers).
+- **Never silent on data loss** — fetch failures, skipped items, and truncations always warn on stderr and appear in the completeness summary / `manifest.json`, even under `-q`.
 
-## When CLI beats connectors
+## Installation
 
-| Situation | `ctxd` CLI | In-model connector |
-|--------|--------|--------|
-| Export a whole Confluence page tree | Best fit | Usually many tool calls |
-| Dump a long Slack thread for later summarization | Best fit | Usually repeated fetch + resolution |
-| Save a PR review artifact to disk | Best fit | Usually no persistent artifact |
-
-## Quick examples
+### 1. Install `ctxd`
 
 ```bash
-# GitHub PR -> markdown file
+# Homebrew (recommended)
+brew tap cheerchen/tap
+brew install ctxd
+
+# Or from source
+uv sync --group dev
+```
+
+### 2. Add the agent skill (recommended)
+
+The companion skill at [`skills/ctxd/SKILL.md`](skills/ctxd/SKILL.md) teaches **Claude Code** and **Codex CLI** to reach for `ctxd` automatically whenever a supported URL appears:
+
+```bash
+mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
+mkdir -p ~/.codex/skills  && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
+```
+
+### 3. Configure credentials
+
+Put tokens for the sources you use in `~/.config/ctxd/config` (`chmod 600`) or export them in your environment. See **[Authentication & Configuration](docs/auth.md)** for required scopes and SSO notes.
+
+```bash
+GITHUB_TOKEN=ghp_...
+SLACK_TOKEN=xoxp-...
+CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+CONFLUENCE_EMAIL=you@example.com
+CONFLUENCE_API_TOKEN=your-token
+```
+
+## Quick start
+
+```bash
+# GitHub PR -> auto-named markdown file (pass -d full to include code diff)
 ctxd -O https://github.com/owner/repo/pull/123
 
-# Slack thread -> stdout
+# Slack thread -> stdout (pass --since <ts> later for new replies only)
 ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 
 # Confluence page tree with images -> local directory
@@ -53,342 +65,21 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
 
-## Supported Sources
-
-| Source | URL Pattern |
-|--------|-------------|
+| Source | Supported URL Pattern |
+|--------|-----------------------|
 | GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
 | Slack Thread | `https://*.slack.com/archives/...` or `.../client/.../thread/...` |
-| Confluence | `https://*.atlassian.net/wiki/...` |
+| Confluence | `https://*.atlassian.net/wiki/...` (including `/wiki/x/<token>` tiny links) |
 | Jira | `https://*.atlassian.net/browse/<KEY>`, `https://*.atlassian.net/servicedesk/customer/portal/<id>/<KEY>` |
 
-## Installation
-
-### Homebrew (recommended)
-
-```bash
-brew tap cheerchen/tap
-brew install ctxd
-```
-
-### From source
-
-```bash
-cd ctxd
-uv sync --group dev
-```
-
-## Required config
-
-Before an agent can actually fetch anything, the relevant auth must already exist.
-
-Config file:
-
-```bash
-~/.config/ctxd/config
-```
-
-Typical keys:
-
-```bash
-SLACK_TOKEN=xoxp-...
-GITHUB_TOKEN=ghp_...
-CONFLUENCE_BASE_URL=https://your-site.atlassian.net
-CONFLUENCE_EMAIL=you@example.com
-CONFLUENCE_API_TOKEN=your-token
-```
-
-Every key can also come from the environment, which takes precedence over the
-file. `chmod 600` the file — ctxd warns on stderr if it is group/world readable.
-
-## Global Options
-
-| Option | Description |
-|--------|-------------|
-| `-o, --output <path>` | Write to file/directory (default: stdout) |
-| `-O, --auto-output` | Auto-generate output path by source (mutually exclusive with `-o`) |
-| `-f, --format text\|md` | Output format (default: `md`) |
-| `-q, --quiet` | Suppress progress logs only — warnings and the completeness summary always print (auto-enabled when stderr is not a TTY) |
-| `-v, --verbose` | Verbose logging |
-| `--profile` | Print stage / HTTP timing summary |
-| `--max-concurrency <N>` | Cap parallel work across fetchers (default: `5`) |
-| `--recurse-depth <N>` | Cross-source recursion: expand supported URLs found in output (default: `0`=off, max `2`; opt-in with `1`/`2`) |
-| `--no-recurse` | Disable cross-source recursion (equivalent to `--recurse-depth 0`; kept for explicitness) |
-| `--max-chars <N>` | Cap output characters (default: `100000` for stdout; file output unlimited unless set explicitly; `-1` = unlimited) |
-| `--max-file-size <N>` | Cap per-attachment download size in bytes (default: `52428800` = 50 MiB; `-1` = unlimited) |
-| `--max-run-size <N>` | Cap total attachment download size per run in bytes (default: `524288000` = 500 MiB; `-1` = unlimited) |
-
-Options can be placed before or after the URL (e.g. both `ctxd -q <url>` and `ctxd <url> -q`).
-
----
-
-## GitHub PR
-
-Export PR metadata, reviews, inline comments, timeline comments, and code changes.
-
-### Prerequisites
-
-A GitHub token in `GITHUB_TOKEN` (env or `~/.config/ctxd/config`). Create a
-[classic PAT](https://github.com/settings/tokens/new) with the **`repo`** scope:
-
-```bash
-GITHUB_TOKEN=ghp_...
-```
-
-`repo` covers every repository you have access to plus all public ones. For a
-repository in a SAML-protected organization, also authorize the token for that
-org from the token list page, or the API returns 404 as if the repo did not
-exist.
-
-> Avoid fine-grained PATs here: they are limited to a single resource owner, so
-> a token scoped to one organization cannot read public repos elsewhere.
-
-### Usage
-
-```bash
-ctxd https://github.com/owner/repo/pull/123
-ctxd https://github.com/owner/repo/pull/123 -o pr-123.md
-ctxd -O https://github.com/owner/repo/pull/123
-```
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `-d, --diff-mode full\|compact\|stat` | Diff output mode (default: `compact`). `compact` lists files and hunk ranges and `stat` lists files and line counts — neither includes code, and the output says so; use `full` to review the changes |
-| `--clean-body / --no-clean-body` | Strip bot-injected HTML noise from PR body (default: on) |
-| `--no-bots` | Drop bot-authored reviews and comments (default: keep all bots) |
-
----
-
-## Slack Thread
-
-Export a full Slack thread with username resolution and attachments.
-
-### Prerequisites
-
-Requires a Slack User Token (`xoxp-...`) with the following scopes:
-- `channels:history`, `groups:history`, `im:history`, `mpim:history`
-- `users:read`
-- `files:read` (if downloading attachments)
-
-Obtain at: [api.slack.com/apps](https://api.slack.com/apps) → Your App → OAuth & Permissions → User Token.
-
-Configure the token (pick one):
-
-```bash
-# Option 1: Environment variable
-export SLACK_TOKEN="xoxp-..."
-
-# Option 2: Config file
-mkdir -p ~/.config/ctxd
-echo 'SLACK_TOKEN=xoxp-...' >> ~/.config/ctxd/config
-```
-
-### Usage
-
-```bash
-# New URL format
-ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
-
-# Archive URL format
-ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
-```
-
-When you copy a link to a specific reply (archive URL with `?thread_ts=` where the path ts differs from the thread root), `ctxd` fetches the entire thread but highlights the focused message — a `**Focused Message:**` line in the header and a `▶` marker on the corresponding message in the conversation flow.
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--download-files` | Download attachments next to the output as `attachments/IMG_{file_id}.{ext}` (e.g. `IMG_F0AAAAAAA1.png`); requires `-o`/`-O` and the `files:read` scope on the Slack token |
-| `--raw` | Keep original Slack mrkdwn markup |
-| `--since <ts>` | Export only the replies posted after message `<ts>` (e.g. `1735881234.123456`) |
-
-#### Following up on a thread
-
-Every export states `**Last Message ts:**` in its header, and the run summary repeats it. When the thread gets more replies, pass that value back instead of re-reading the whole thread:
-
-```bash
-ctxd '<thread-url>' --since 1735881234.123456
-```
-
-The output carries a short header (thread URL, since, number of new messages, new `Last Message ts`) and the new replies only; with nothing new it says `No new replies since <ts>.` and exits 0. Filtering is done by Slack (`conversations.replies` with `oldest`); the thread parent, which the API returns on every call regardless, is dropped locally. With `-O` the file is named `slack-<channel>-<thread>.since-<ts>.md`, so it does not overwrite the full export. Edits to, or deletions of, messages before `<ts>` are not visible in this mode — run a full export when those matter.
-
-Each attachment line keeps the Slack permalink (the address a human opens) and, when the file was downloaded, appends `— saved: attachments/IMG_<id>.<ext>` so the local copy is discoverable from the export. The run summary reports how many files were downloaded, or how many were left behind when the flag is not used.
-
----
-
-## Confluence
-
-Export Confluence pages to Markdown. By default prints a single page to stdout; pass `-r` / `-i` with `-o <dir>` (or `-O`) to opt into recursive export with images.
-
-### Prerequisites
-
-Requires an Atlassian API Token. Obtain at: [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
-
-Configure (all three values are required). Pick one:
-
-```bash
-# Option 1: Environment variables
-export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
-export CONFLUENCE_EMAIL="you@example.com"
-export CONFLUENCE_API_TOKEN="your-token"
-
-# Option 2: Config file (recommended for persistent use)
-mkdir -p ~/.config/ctxd
-cat >> ~/.config/ctxd/config <<'EOF'
-CONFLUENCE_BASE_URL=https://your-site.atlassian.net
-CONFLUENCE_EMAIL=you@example.com
-CONFLUENCE_API_TOKEN=your-token
-EOF
-chmod 600 ~/.config/ctxd/config
-```
-
-Environment variables take precedence over the config file, so CI and one-off overrides work unchanged. If the file is readable by group/others, ctxd prints a one-shot stderr warning with the exact `chmod 600` command to fix it.
-
-### Usage
-
-```bash
-# Default: single page to stdout
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456
-
-# Tiny link (short URL) — resolved via authenticated redirect
-ctxd https://your-site.atlassian.net/wiki/x/ABC123
-
-# Recursive export with images, to an explicit directory
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./output
-
-# Or let ctxd pick the output directory name
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
-
-# One page to one file; downloads land next to it in page_attachments/
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attachments -o page.md
-```
-
-> **Note**: `-r` / `-i` / `--all-attachments` need `-o` or `-O`. Without `-r`, `-o page.md` (any path with a suffix) writes that one file, with downloads in a sibling `page_attachments/` — the same shape as Jira. `-o <dir>`, `-O` and every `-r` export write `<dir>/<id>_<title>/README.md` per page with `images/` and `attachments/` beside it; `-r` with a file-like `-o` is rejected.
-> **Tiny links**: `/wiki/x/<token>` URLs are followed once (after auth) and rewritten to the canonical long URL before any page fetch; `-O` auto-output names them `confluence-<token>` since the real page id isn't known at filename time.
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `-r, --recursive / --no-recursive` | Include every descendant page, at any depth (default: off). The run summary states the tree size: `page tree: N descendant page(s), max depth D` |
-| `-i, --include-images / --no-include-images` | Download referenced images (default: off) |
-| `--all-attachments` | Download every attachment — images to `images/`, other files (PDF, spreadsheets, …) to `attachments/` (default: off) |
-| `--debug` | Save raw HTML for debugging |
-
-Images that are not downloaded are not dropped: they link to the attachment's REST download URL, which works with the same API token (`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`) and embeds no expiring token. The run summary reports how many images were left remote.
-
-Every page export ends with an `Attachments` section listing each attachment with filename, MIME type and size, linking the local copy when it was saved and the REST download URL otherwise. A file that is attached but never embedded in the body is therefore still visible, and the run summary says how many were not downloaded.
-
----
-
-## Jira
-
-Export full Jira issue content (description, comments, custom fields, attachments).
-
-### Prerequisites
-
-Shares authentication with Confluence (see above), so the same config applies. Jira also supports `--debug` for raw HTML saving.
-
-### Usage
-
-```bash
-ctxd https://your-site.atlassian.net/browse/PROJECT-123
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
-
-# Download every attachment next to the output file
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
-
-# Only the images the issue body actually references
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
-```
-
-Rich-text custom fields are exported as Markdown. Serializable plain fields (strings, numbers, booleans, simple lists/dicts) are exported too. Unsupported nested objects are omitted with a stderr warning and a note in the run summary — never dropped silently.
-
-### Attachments
-
-Every issue export ends with an `Attachments` section listing filename, MIME type and size, so nothing is invisible even when no file is downloaded. Attachments are only written to disk when `-i` or `--all-attachments` is passed:
-
-| Option | Description |
-|--------|-------------|
-| `-i, --include-images` | Download images referenced from the issue body (default: off) |
-| `--all-attachments` | Download every attachment on the issue (default: off) |
-
-Downloaded files go to `<output-stem>_attachments/`, named `<attachment-id>-<filename>` so same-named uploads never overwrite each other. Attachment URLs in the description, comments and custom fields are rewritten to the local relative paths; anything that failed to download keeps its original remote URL.
-
-> **Note**: `-i` / `--all-attachments` require `-o <file>` or `-O`. When an issue has attachments and neither flag is set, the run summary says how many were skipped and which flag to use.
-
-### Service desk requests
-
-A request raised through a Jira Service Management portal is readable even when you are only its customer. The platform API answers a customer with 404 (no Browse permission), indistinguishable from a missing issue, so `ctxd` decides by project: on a 404 it retries through the service desk customer API only when the URL is a portal link (`/servicedesk/customer/portal/<id>/<KEY>`) or the project is one of the service desks visible to you. That list is fetched once and cached for a day in `~/.cache/ctxd/` (`$XDG_CACHE_HOME` respected), so a genuine 404 in an ordinary project costs no extra request. Agents of the service desk still get the full platform-API export, internal comments included.
-
-The customer view has less than the agent view, and the output says so: assignee, priority, labels, components and the update time show `(not visible in portal)`, comments are the public ones only, and the run summary notes that the request was read through the customer API. Request form fields other than summary and description are exported under their portal labels.
-
----
-
-## Completeness summary and manifest
-
-Every run prints a one-line completeness summary to stderr (always visible, including under `-q`):
-
-```text
-ctxd summary: source=jira | fetched=1 | rendered=1 | artifacts=1
-```
-
-Counts cover source resources fetched/rendered, artifacts written, plus `skipped` / `failed` / `truncated` when non-zero. Free-form notes (e.g. omitted custom fields, failed downloads) are listed under the line.
-
-When writing to a file or directory, a machine-readable manifest is written next to the output:
-
-| Output mode | Manifest path |
-|-------------|---------------|
-| Single file (`-o issue.md` / `-O`) | `issue.md.manifest.json` |
-| Directory (Confluence tree) | `<dir>/manifest.json` |
-
-Manifest JSON mirrors the summary (counts, notes, per-item status). Cross-source recursion merges child counts into the root summary; child content is embedded in the same artifact, so `artifacts` stays `1`.
-
----
-
-## Output integrity and limits
-
-- **Atomic writes** — text and binary files are written via temp file + rename to avoid truncated artifacts on interrupt.
-- **`--max-chars`** — truncates at a newline boundary, closes open code fences, and appends a truncation notice. Hard cap: output length never exceeds the limit. Default applies to stdout; pass the flag explicitly to also cap file output.
-- **Attachment size caps** — streamed downloads enforce per-file (`--max-file-size`) and per-run (`--max-run-size`) budgets shared across the recursion tree. Exceeded downloads warn and count as failed rather than filling the disk.
-
----
-
-## Cross-source recursion
-
-By default, cross-source recursion is **off** (`--recurse-depth 0`). Opt in with `--recurse-depth 1` or `2` to have `ctxd` scan the rendered output for supported URLs (Slack, GitHub PR, Confluence, Jira) and fetch them too, appending the results as a labelled appendix. This means a Slack thread that links a Jira issue and a GitHub PR pulls all three in one command — no follow-up fetches needed.
-
-```bash
-# Recursion off (default) — primary URL only
-ctxd https://app.slack.com/client/.../thread/...
-
-# Enable recursion (depth=1, auto-expands linked supported URLs)
-ctxd <url> --recurse-depth 1
-
-# Deeper recursion (max 2)
-ctxd <url> --recurse-depth 2
-```
-
-Key behaviours:
-- **Deduplication**: the same URL is never fetched twice within one run.
-- **Cap**: at most 5 child URLs are expanded per level (prevents Jira issue-link explosions).
-- **Graceful skip**: if a child URL lacks credentials (e.g. a Slack thread links a Confluence page but no Confluence token is configured), the appendix notes the skip instead of failing.
-- **Confluence directory export**: recursion is disabled when using `-o`/`-O` with Confluence (which writes a page tree to disk); use stdout for recursion.
-
----
-
-## Performance
-
-Measured results live in [`bench/results/`](bench/results/): one file per run, with the refs measured, each scenario's shape, and median wall time, request count, bytes written and peak memory. To reproduce a run or compare two refs:
-
-```bash
-uv run scripts/bench.py --ref v0.6.0 --ref HEAD
-```
-
-Scenarios are read from `~/.config/ctxd/bench-targets` (format in [`scripts/bench.py`](scripts/bench.py)), so real URLs never enter the repo.
+## Documentation
+
+| Guide | Contents |
+|-------|----------|
+| [Authentication & Configuration](docs/auth.md) | Token types, required scopes, SAML SSO, config file precedence |
+| [CLI Reference](docs/cli.md) | Global flags, per-source options, Slack `--since`, Confluence layouts, cross-source recursion, `manifest.json` & size caps |
+| [Agent Skill](skills/ctxd/SKILL.md) | Prompt instructions and default flag conventions for AI coding agents |
+| [Benchmarks](bench/results/) | Reproducible wall-time, request-count, and memory measurements (`uv run scripts/bench.py`) |
 
 ## License
 

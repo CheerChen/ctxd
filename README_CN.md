@@ -2,400 +2,84 @@
 
 把工作 URL 变成适合喂给 LLM 的 Markdown。
 
-**📖 [English Documentation](README.md)**
+**📖 [English](README.md) · [认证与配置](docs/auth_cn.md) · [CLI 参考手册](docs/cli_cn.md)**
 
 ![ctxd 总览](assets/ctxd-overview.svg)
 
-`ctxd` 是一个 CLI，用来把 GitHub PR、Slack thread、Confluence 页面、Jira issue 导出成干净、可复查、可落盘的 Markdown 或 text。
-
-它适合：
-
-- 一次性拉很多上下文
-- 把结果稳定写到磁盘
-- 复用同一条命令
-- 减少模型内 connector 反复做 tool selection 的开销
-
-## Agent skill（推荐）
-
-ctxd 自带配套 skill，位于 [skills/ctxd/SKILL.md](skills/ctxd/SKILL.md)，可同时用于 **Claude Code** 和 **Codex CLI**。它会让 agent 在对话里看到受支持的 URL 时优先使用 `ctxd`，而不是退回到聊天式抓取或模型内 connector。
-
-```bash
-# Claude Code
-mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
-
-# Codex CLI
-mkdir -p ~/.codex/skills && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
-```
-
-这个 skill 假设下方的[必要配置](#必要配置)已经完成。如果凭证缺失，agent 会先告诉你缺哪一个 key 或登录态，再尝试抓取。
+GitHub PR、Slack thread、Confluence 页面、Jira issue —— 一条命令导出成干净、可落盘、可复查的 Markdown。
 
 ## 为什么用 ctxd
 
-- **CLI 优先，不是聊天优先**：一条命令生成稳定 artifact，便于检查、diff、归档、继续喂给任意模型。
-- **批量导出是第一公民**：PR、Slack thread、Confluence page tree、Jira issue 都是「整份上下文」导出，而不是多轮零碎抓取。
-- **评论和元数据完整保留**：review、inline comments、时间戳、附件、页面元数据、自定义字段都不会丢。
-- **数据丢失不静默**：抓取失败、跳过项与截断会始终打到 stderr，并反映在运行摘要 / `manifest.json` 中，即使使用了 `-q`。
-- **适合 agent workflow**：全源并发拉取，并带 `--profile`、`--max-concurrency`、完整性摘要与输出上限控制。
+- **CLI 优先，不是聊天优先**：一条命令生成稳定本地文件，省去模型内 connector 反复多轮调用的开销，便于检查、diff 与复用。
+- **评论和元数据完整保留**：PR review 与行内评论、Slack 线程上下文、Confluence 页面元数据与附件清单、Jira 自定义字段一并保留。
+- **默认面向批量导出**：整棵 Confluence 页面树、长 Slack thread、大体积 PR 均支持并发拉取（实测数据见 [`bench/results/`](bench/results/)）。
+- **数据丢失绝不静默**：抓取失败、跳过项与截断始终输出到 stderr 并记录在运行摘要 / `manifest.json` 中，即使开启 `-q` 也不会隐藏。
 
-## 什么时候 CLI 比 connector 更合适
+## 安装与配置
 
-| 场景 | `ctxd` CLI | 模型内 connector |
-|--------|--------|--------|
-| 导出整棵 Confluence 页面树 | 最适合 | 往往需要很多次工具调用 |
-| 拉长 Slack thread 供后续总结 | 最适合 | 往往会重复抓取和解析 |
-| 把 PR review 上下文落成文件 | 最适合 | 通常没有持久 artifact |
-
-## 快速示例
+### 1. 安装 `ctxd`
 
 ```bash
-# GitHub PR -> 自动生成 markdown 文件
+# Homebrew（推荐）
+brew tap cheerchen/tap
+brew install ctxd
+
+# 或从源码安装
+uv sync --group dev
+```
+
+### 2. 安装 Agent Skill（推荐）
+
+配套 skill（[`skills/ctxd/SKILL.md`](skills/ctxd/SKILL.md)）可同时用于 **Claude Code** 和 **Codex CLI**，让 agent 遇到受支持的 URL 时自动调用 `ctxd`：
+
+```bash
+mkdir -p ~/.claude/skills && ln -s "$(realpath skills/ctxd)" ~/.claude/skills/ctxd
+mkdir -p ~/.codex/skills  && ln -s "$(realpath skills/ctxd)" ~/.codex/skills/ctxd
+```
+
+### 3. 配置凭证
+
+在 `~/.config/ctxd/config`（建议 `chmod 600`）或环境变量中配置所需数据源的凭证。各平台 Token 获取方式、权限范围与 SAML 授权说明见 **[认证与配置](docs/auth_cn.md)**。
+
+```bash
+GITHUB_TOKEN=ghp_...
+SLACK_TOKEN=xoxp-...
+CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+CONFLUENCE_EMAIL=you@example.com
+CONFLUENCE_API_TOKEN=your-token
+```
+
+## 快速上手
+
+```bash
+# GitHub PR -> 自动命名 Markdown 文件（审查代码改动请加 -d full）
 ctxd -O https://github.com/owner/repo/pull/123
 
-# Slack thread -> 输出到 stdout
+# Slack thread -> 输出到 stdout（后续可用 --since <ts> 只拉新增回复）
 ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
 
 # Confluence 页面树 + 图片 -> 导出到本地目录
 ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
 
-# Jira issue + 引用的图片 -> 本地文件
+# Jira issue + 正文引用的图片 -> 本地文件
 ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 ```
-## 支持的数据源
 
-| 来源 | URL 模式 |
-|------|----------|
+| 数据源 | 支持的 URL 模式 |
+|--------|-----------------|
 | GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
 | Slack Thread | `https://*.slack.com/archives/...` 或 `.../client/.../thread/...` |
-| Confluence | `https://*.atlassian.net/wiki/...` |
+| Confluence | `https://*.atlassian.net/wiki/...`（含 `/wiki/x/<token>` 短链接） |
 | Jira | `https://*.atlassian.net/browse/<KEY>`、`https://*.atlassian.net/servicedesk/customer/portal/<id>/<KEY>` |
 
-## 安装
+## 文档导航
 
-### Homebrew（推荐）
-
-```bash
-brew tap cheerchen/tap
-brew install ctxd
-```
-
-### 从源码
-
-```bash
-cd ctxd
-uv sync --group dev
-```
-
-## 必要配置
-
-agent 真正能用 `ctxd` 取数，前提是认证已经配好。
-
-配置文件：
-
-```bash
-~/.config/ctxd/config
-```
-
-常见配置项：
-
-```bash
-SLACK_TOKEN=xoxp-...
-GITHUB_TOKEN=ghp_...
-CONFLUENCE_BASE_URL=https://your-site.atlassian.net
-CONFLUENCE_EMAIL=you@example.com
-CONFLUENCE_API_TOKEN=your-token
-```
-
-所有配置项都可以改用环境变量，环境变量优先于配置文件。建议对配置文件执行
-`chmod 600`——如果同组或其他用户可读，ctxd 会在 stderr 给出提醒。
-
-## 通用参数
-
-| 参数 | 说明 |
+| 文档 | 内容 |
 |------|------|
-| `-o, --output <path>` | 输出到文件/目录（默认 stdout） |
-| `-O, --auto-output` | 根据来源自动生成输出路径（与 `-o` 互斥） |
-| `-f, --format text\|md` | 输出格式（默认 `md`） |
-| `-q, --quiet` | 仅抑制进度日志——告警与完整性摘要始终输出（stderr 非 TTY 时自动启用） |
-| `-v, --verbose` | 详细日志 |
-| `--profile` | 打印 stage / HTTP 耗时摘要 |
-| `--max-concurrency <N>` | 控制抓取并发上限（默认 `5`） |
-| `--recurse-depth <N>` | 跨源递归：展开输出中出现的 supported URL（默认 `0`=关闭，最大 `2`；需手动 `1`/`2` 开启） |
-| `--no-recurse` | 关闭跨源递归（等价于 `--recurse-depth 0`；保留以便显式声明） |
-| `--max-chars <N>` | 限制输出字符数（stdout 默认 `100000`；文件输出默认不限，显式传入时才生效；`-1` = 不限制） |
-| `--max-file-size <N>` | 单个附件下载上限，单位字节（默认 `52428800` = 50 MiB；`-1` = 不限制） |
-| `--max-run-size <N>` | 单次运行附件下载总量上限，单位字节（默认 `524288000` = 500 MiB；`-1` = 不限制） |
-
-参数可以放在 URL 前后（如 `ctxd -q <url>` 和 `ctxd <url> -q` 均可）。
-
----
-
-## GitHub PR
-
-导出 PR 的元数据、评审、行内评论、时间线评论和代码变更。
-
-### 前置条件
-
-在 `GITHUB_TOKEN`（环境变量或 `~/.config/ctxd/config`）中配置一个 GitHub token。
-到 [classic PAT 页面](https://github.com/settings/tokens/new)创建，勾选 **`repo`**
-权限：
-
-```bash
-GITHUB_TOKEN=ghp_...
-```
-
-`repo` 覆盖你有权访问的所有仓库以及全部公开仓库。如果目标仓库属于开启了 SAML 的
-组织，还需要在 token 列表页对该组织单独授权，否则 API 会返回 404，看起来就像仓库
-不存在。
-
-> 不建议用 fine-grained PAT：它只能访问单一 resource owner 的资源，绑定到某个组织
-> 之后就读不到其他 owner 名下的公开仓库了。
-
-### 使用
-
-```bash
-ctxd https://github.com/owner/repo/pull/123
-ctxd https://github.com/owner/repo/pull/123 -o pr-123.md
-ctxd -O https://github.com/owner/repo/pull/123
-```
-
-### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `-d, --diff-mode full\|compact\|stat` | Diff 输出模式（默认 `compact`）。`compact` 列出文件与 hunk 行号范围，`stat` 列出文件与增删行数——两者都不含代码，输出中会注明；要审查改动内容请用 `full` |
-| `--clean-body / --no-clean-body` | 清理 PR body 中的 bot HTML 噪音（默认开启） |
-| `--no-bots` | 过滤 bot 作者的评审和评论（默认全部保留） |
-
----
-
-## Slack Thread
-
-导出完整 Slack 对话线程，包括用户名解析和附件。
-
-### 前置条件
-
-需要一个 Slack User Token（`xoxp-...`），具备以下权限：
-- `channels:history`, `groups:history`, `im:history`, `mpim:history`
-- `users:read`
-- `files:read`（如需下载附件）
-
-获取方式：[api.slack.com/apps](https://api.slack.com/apps) → 你的 App → OAuth & Permissions → User Token。
-
-配置 Token（二选一）：
-
-```bash
-# 方式一：环境变量
-export SLACK_TOKEN="xoxp-..."
-
-# 方式二：配置文件
-mkdir -p ~/.config/ctxd
-echo 'SLACK_TOKEN=xoxp-...' >> ~/.config/ctxd/config
-```
-
-### 使用
-
-```bash
-# 新版 URL 格式
-ctxd https://app.slack.com/client/T.../C.../thread/C...-1234567890.123456
-
-# 归档 URL 格式
-ctxd https://your-workspace.slack.com/archives/C.../p...?thread_ts=...
-```
-
-当你复制的是某条特定回复的链接时（归档 URL 带 `?thread_ts=` 且 path ts 与 thread root 不同），`ctxd` 仍然抓取整个 thread，但会高亮你指向的那条消息——header 中显示 `**Focused Message:**`，对话流中对应消息标有 `▶` 标记。
-
-### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `--download-files` | 下载附件到输出文件旁的 `attachments/`，文件名格式为 `IMG_{file_id}.{ext}`（如 `IMG_F0AAAAAAA1.png`）；需要 `-o`/`-O`，且 Slack token 含 `files:read` scope |
-| `--raw` | 保留原始 Slack mrkdwn 标记 |
-| `--since <ts>` | 只导出消息 `<ts>`（如 `1735881234.123456`）之后的回复 |
-
-#### 跟进 thread 的新回复
-
-每次导出的 header 都有 `**Last Message ts:**`，运行摘要里也会重复一遍。thread 有了新回复时，把这个值传回去，不必重读整串：
-
-```bash
-ctxd '<thread-url>' --since 1735881234.123456
-```
-
-输出只有一个精简 header（thread URL、since、新消息数、新的 `Last Message ts`）和新回复；没有新回复时输出 `No new replies since <ts>.`，退出码为 0。过滤由 Slack 完成（`conversations.replies` 的 `oldest` 参数）；该 API 每次都会返回 thread parent，ctxd 在本地把它去掉。配合 `-O` 时文件名为 `slack-<channel>-<thread>.since-<ts>.md`，不会覆盖全量导出。这个模式看不到 `<ts>` 之前消息的编辑和删除，需要时请重新全量导出。
-
-每条附件行都保留 Slack permalink（供人在浏览器打开）；文件下载成功时追加 `— saved: attachments/IMG_<id>.<ext>`，这样从导出产物就能找到本地副本。运行摘要会报告下载了几个文件，或未使用该 flag 时跳过了几个。
-
----
-
-## Confluence
-
-将 Confluence 页面导出为 Markdown。**默认输出单页到 stdout**；传 `-r` / `-i` 并配合 `-o <dir>`（或 `-O`）即可做递归导出和图片下载。
-
-### 前置条件
-
-需要 Atlassian API Token。获取方式：[id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)。
-
-三项值均必填。二选一：
-
-```bash
-# 方式一：环境变量
-export CONFLUENCE_BASE_URL="https://your-site.atlassian.net"
-export CONFLUENCE_EMAIL="you@example.com"
-export CONFLUENCE_API_TOKEN="your-token"
-
-# 方式二：配置文件（推荐长期使用）
-mkdir -p ~/.config/ctxd
-cat >> ~/.config/ctxd/config <<'EOF'
-CONFLUENCE_BASE_URL=https://your-site.atlassian.net
-CONFLUENCE_EMAIL=you@example.com
-CONFLUENCE_API_TOKEN=your-token
-EOF
-chmod 600 ~/.config/ctxd/config
-```
-
-环境变量优先级高于配置文件，方便 CI 和临时覆盖。如果配置文件被 group/others 可读，ctxd 会在 stderr 打印一条一次性警告，并附上 `chmod 600` 修复命令。
-
-### 使用
-
-```bash
-# 默认：单页输出到 stdout
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456
-
-# 短链接（tiny link）——认证后跟随重定向解析为长 URL
-ctxd https://your-site.atlassian.net/wiki/x/ABC123
-
-# 递归导出 + 图片，落到指定目录
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -o ./output
-
-# 或让 ctxd 自动选一个目录名
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 -r -i -O
-
-# 单页写成一个文件；下载内容放在同级的 page_attachments/
-ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attachments -o page.md
-```
-
-> **注意**：`-r` / `-i` / `--all-attachments` 需配合 `-o` 或 `-O`。不带 `-r` 时，`-o page.md`（任何带后缀的路径）只写这一个文件，下载内容放在同级的 `page_attachments/`，与 Jira 一致。`-o <dir>`、`-O` 以及所有 `-r` 导出，每页写成 `<dir>/<id>_<title>/README.md`，旁边是 `images/` 与 `attachments/`；`-r` 配文件形式的 `-o` 会直接报错。
-> **短链接**：`/wiki/x/<token>` 形式的 URL 会在认证后跟随一次重定向，改写为标准长 URL 再进行页面抓取；`-O` 自动命名时因尚未拿到真实 page id，文件名回退为 `confluence-<token>`。
-
-### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `-r, --recursive / --no-recursive` | 包含任意深度的全部子孙页面（默认关闭）。运行摘要会给出页面树规模：`page tree: N descendant page(s), max depth D` |
-| `-i, --include-images / --no-include-images` | 下载正文引用的图片（默认关闭） |
-| `--all-attachments` | 下载全部附件：图片放 `images/`，其他文件（PDF、表格等）放 `attachments/`（默认关闭） |
-| `--debug` | 保存原始 HTML 用于排查 |
-
-没有下载的图片不会被丢弃：链接指向该附件的 REST 下载地址，用同一个 API token 就能取（`curl -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" -L <url>`），且不含会过期的 token。运行摘要会说明有多少张图保持为远程链接。
-
-每个页面导出末尾都有一个 `Attachments` 段落，列出每个附件的文件名、MIME 类型与体积；已下载的链到本地副本，否则链到 REST 下载地址。因此只挂在页面上、正文没有引用的文件也不会被隐藏，运行摘要会说明有几个没有下载。
-
----
-
-## Jira
-
-导出 Jira Issue 的完整内容（描述、评论、自定义字段、附件）。
-
-### 前置条件
-
-与 Confluence 共享认证。配置方式同 Confluence（见上）。Jira 也支持 `--debug` 来保存原始 HTML。
-
-### 使用
-
-```bash
-ctxd https://your-site.atlassian.net/browse/PROJECT-123
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 -o issue.md
-
-# 下载全部附件到输出文件旁边
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
-
-# 只下载正文引用到的图片
-ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
-```
-
-富文本自定义字段会导出为 Markdown；可序列化的普通字段（字符串、数字、布尔、简单列表/字典）也会导出。无法序列化的嵌套对象会省略，并在 stderr 告警、写入运行摘要 notes——不会静默丢弃。
-
-### 附件
-
-每次 Issue 导出末尾都会有一个 `Attachments` 段落，列出文件名、MIME 类型与体积——即使一个文件都没下载，附件的存在也不会被隐藏。只有传 `-i` 或 `--all-attachments` 才会真正落盘：
-
-| 选项 | 说明 |
-|------|------|
-| `-i, --include-images` | 下载正文引用的图片（默认关闭） |
-| `--all-attachments` | 下载 Issue 上的全部附件（默认关闭） |
-
-下载目录为 `<输出文件名>_attachments/`，文件名为 `<附件 id>-<原文件名>`，同名上传不会互相覆盖。描述、评论、自定义字段中的附件 URL 会被改写为本地相对路径；下载失败的条目保留原始远程 URL。
-
-> **注意**：`-i` / `--all-attachments` 需要配合 `-o <文件>` 或 `-O`。当 Issue 有附件而两个 flag 都没传时，运行摘要会说明跳过了几个附件、该用哪个 flag。
-
-### Service desk 请求
-
-通过 Jira Service Management 门户提交的请求，即使你只是它的客户（customer）也能导出。平台 API 对客户返回 404（没有 Browse 权限），与 issue 不存在无法区分，所以 `ctxd` 按项目判断：只有 URL 是门户链接（`/servicedesk/customer/portal/<id>/<KEY>`），或者项目属于你可见的 service desk 时，404 才改走 service desk 客户 API 重试。可见的 service desk 列表只取一次，在 `~/.cache/ctxd/`（遵循 `$XDG_CACHE_HOME`）缓存一天，所以普通项目里真正的 404 不会多发请求。该 service desk 的 agent 仍走平台 API 完整导出，包含内部评论。
-
-客户视图的信息比 agent 视图少，输出会明确标出：assignee、priority、labels、components 和更新时间显示为 `(not visible in portal)`，评论只有公开评论，运行摘要会注明是通过客户 API 读取的。summary 和 description 以外的请求表单字段按门户上的标签名导出。
-
----
-
-## 完整性摘要与 manifest
-
-每次运行都会向 stderr 打印一行完整性摘要（始终可见，含 `-q`）：
-
-```text
-ctxd summary: source=jira | fetched=1 | rendered=1 | artifacts=1
-```
-
-计数包括抓取/渲染的源资源数、写出的 artifact 数；`skipped` / `failed` / `truncated` 非零时也会出现。补充说明（例如省略的自定义字段、下载失败）列在该行下方 notes 中。
-
-写入文件或目录时，会在输出旁生成机器可读的 manifest：
-
-| 输出模式 | Manifest 路径 |
-|----------|---------------|
-| 单文件（`-o issue.md` / `-O`） | `issue.md.manifest.json` |
-| 目录（Confluence 页面树） | `<dir>/manifest.json` |
-
-manifest JSON 与摘要字段一致（计数、notes、逐项状态）。跨源递归会把子项计数合并到根摘要；子内容嵌在同一 artifact 内，因此 `artifacts` 仍为 `1`。
-
----
-
-## 输出完整性与上限
-
-- **原子写入**：文本与二进制均经临时文件 + rename 落盘，避免中断时留下半截文件。
-- **`--max-chars`**：在换行边界截断，闭合未结束的代码围栏，并附加截断说明。硬上限：输出长度不超过设定值。默认作用于 stdout；显式传入时才限制文件输出。
-- **附件体积上限**：流式下载按单文件（`--max-file-size`）与单次运行总量（`--max-run-size`）计费，预算在递归树内共享。超限会告警并计入 failed，而不是写满磁盘。
-
----
-
-## 跨源递归
-
-默认情况下，跨源递归**关闭**（`--recurse-depth 0`）。传 `--recurse-depth 1` 或 `2` 开启后，`ctxd` 会扫描输出内容中出现的 supported URL（Slack / GitHub PR / Confluence / Jira），自动抓取并追加为带标签的附录。这意味着一个 Slack thread 里贴了 Jira issue 和 GitHub PR 链接时，一条命令就能把三处内容全部拉下来——不需要再手动跟进抓取。
-
-```bash
-# 递归关闭（默认）——仅抓取主 URL
-ctxd https://app.slack.com/client/.../thread/...
-
-# 开启递归（depth=1，自动展开链接中的 supported URL）
-ctxd <url> --recurse-depth 1
-
-# 更深递归（最大 2）
-ctxd <url> --recurse-depth 2
-```
-
-关键行为：
-- **去重**：同一次 run 中同一个 URL 不会被重复抓取。
-- **上限**：每层最多展开 5 个子 URL（防止 Jira issue 互链爆炸）。
-- **缺凭证跳过**：如果子 URL 缺少凭证（比如 Slack thread 里贴了 Confluence 链接但没配 Confluence token），附录中标注跳过而非报错中断。
-- **Confluence 目录导出**：使用 `-o`/`-O` 导出 Confluence 页面树时递归关闭（目录树与拼接流不兼容）；需要递归请用 stdout。
-
----
-
-## 性能
-
-实测结果见 [`bench/results/`](bench/results/)：每次运行一个文件，记录所测的 ref、各场景的形态，以及耗时中位数、请求数、写出字节数与峰值内存。复现某次运行或对比两个 ref：
-
-```bash
-uv run scripts/bench.py --ref v0.6.0 --ref HEAD
-```
-
-场景从 `~/.config/ctxd/bench-targets` 读取（格式见 [`scripts/bench.py`](scripts/bench.py)），真实 URL 不会进入仓库。
+| [认证与配置](docs/auth_cn.md) | 各平台 Token 类型、权限 Scope、SAML SSO 授权、环境变量优先级 |
+| [CLI 参考手册](docs/cli_cn.md) | 通用参数、各数据源专属参数、Slack `--since` 增量跟进、Confluence 目录规则、跨源递归、`manifest.json` 与体积上限 |
+| [Agent Skill](skills/ctxd/SKILL.md) | 面向 AI 编程助手的调用约定与默认参数说明 |
+| [性能基准](bench/results/) | 各场景耗时、请求数与峰值内存实测记录（`uv run scripts/bench.py`） |
 
 ## 许可证
 

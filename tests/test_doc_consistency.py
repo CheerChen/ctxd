@@ -1,10 +1,10 @@
-"""README / README_CN / SKILL must not contradict the CLI's actual defaults.
+"""CLI reference docs, READMEs, and SKILL must not contradict the CLI's defaults.
 
 Each option's default is read from the Click command and rendered into the
 phrase its options-table row is expected to carry, so changing a default
-fails here until both READMEs say the new value.  The recursion section
-check exists because v0.4.3 changed ``--recurse-depth`` from 1 to 0 while
-the prose still described recursion as on.
+fails here until the CLI reference docs say the new value.  The recursion
+section check exists because v0.4.3 changed ``--recurse-depth`` from 1 to 0
+while the prose still described recursion as on.
 """
 
 from __future__ import annotations
@@ -19,9 +19,17 @@ from ctxd.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = {
-    "en": (ROOT / "README.md").read_text(encoding="utf-8"),
-    "cn": (ROOT / "README_CN.md").read_text(encoding="utf-8"),
+    "en": (ROOT / "docs" / "cli.md").read_text(encoding="utf-8"),
+    "cn": (ROOT / "docs" / "cli_cn.md").read_text(encoding="utf-8"),
 }
+ALL_MARKDOWN = [
+    ROOT / "README.md",
+    ROOT / "README_CN.md",
+    ROOT / "docs" / "auth.md",
+    ROOT / "docs" / "auth_cn.md",
+    ROOT / "docs" / "cli.md",
+    ROOT / "docs" / "cli_cn.md",
+]
 SKILL = (ROOT / "skills" / "ctxd" / "SKILL.md").read_text(encoding="utf-8")
 DEFAULTS = {p.name: p.default for p in main.params if p.name}
 
@@ -53,7 +61,7 @@ def test_options_table_states_the_cli_default(param: str, flag: str, phrases, la
     expected = _ON_OFF[lang][default] if phrases is None else phrases[lang].format(default)
     rows = _table_rows(DOCS[lang], flag)
 
-    assert rows, f"no options-table row for {flag} in README ({lang})"
+    assert rows, f"no options-table row for {flag} in CLI reference ({lang})"
     for row in rows:
         assert expected in row, f"{flag} default is {default!r}; row says: {row}"
 
@@ -83,3 +91,14 @@ def test_help_renders() -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+@pytest.mark.parametrize("md_path", ALL_MARKDOWN, ids=lambda p: str(p.relative_to(ROOT)))
+def test_relative_markdown_links_resolve(md_path: Path) -> None:
+    text = md_path.read_text(encoding="utf-8")
+    for raw_target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", text):
+        if raw_target.startswith(("http://", "https://", "#")):
+            continue
+        rel_file = raw_target.split("#", 1)[0]
+        target = (md_path.parent / rel_file).resolve()
+        assert target.exists(), f"{md_path.relative_to(ROOT)} links to missing path {raw_target!r}"
