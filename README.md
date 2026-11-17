@@ -60,7 +60,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 | GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
 | Slack Thread | `https://*.slack.com/archives/...` or `.../client/.../thread/...` |
 | Confluence | `https://*.atlassian.net/wiki/...` |
-| Jira | `https://*.atlassian.net/browse/<KEY>` |
+| Jira | `https://*.atlassian.net/browse/<KEY>`, `https://*.atlassian.net/servicedesk/customer/portal/<id>/<KEY>` |
 
 ## Installation
 
@@ -319,6 +319,12 @@ Every issue export ends with an `Attachments` section listing filename, MIME typ
 Downloaded files go to `<output-stem>_attachments/`, named `<attachment-id>-<filename>` so same-named uploads never overwrite each other. Attachment URLs in the description, comments and custom fields are rewritten to the local relative paths; anything that failed to download keeps its original remote URL.
 
 > **Note**: `-i` / `--all-attachments` require `-o <file>` or `-O`. When an issue has attachments and neither flag is set, the run summary says how many were skipped and which flag to use.
+
+### Service desk requests
+
+A request raised through a Jira Service Management portal is readable even when you are only its customer. The platform API answers a customer with 404 (no Browse permission), indistinguishable from a missing issue, so `ctxd` decides by project: on a 404 it retries through the service desk customer API only when the URL is a portal link (`/servicedesk/customer/portal/<id>/<KEY>`) or the project is one of the service desks visible to you. That list is fetched once and cached for a day in `~/.cache/ctxd/` (`$XDG_CACHE_HOME` respected), so a genuine 404 in an ordinary project costs no extra request. Agents of the service desk still get the full platform-API export, internal comments included.
+
+The customer view has less than the agent view, and the output says so: assignee, priority, labels, components and the update time show `(not visible in portal)`, comments are the public ones only, and the run summary notes that the request was read through the customer API. Request form fields other than summary and description are exported under their portal labels.
 
 ---
 

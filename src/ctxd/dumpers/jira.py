@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import markdownify
+import requests
 
 from ctxd.attachments import format_size
 from ctxd.auth import ensure_jira_auth
@@ -19,7 +20,8 @@ from ctxd.jira.attachments import (
     select_attachments,
 )
 from ctxd.jira.converter import preprocess_jira_html
-from ctxd.jira.url_parser import parse_jira_url
+from ctxd.jira.servicedesk import service_desk_keys, to_issue
+from ctxd.jira.url_parser import is_portal_url, parse_jira_url, project_key
 
 
 class JiraDumper(BaseDumper):
@@ -58,7 +60,13 @@ class JiraDumper(BaseDumper):
             raise RuntimeError("Jira client not initialized")
 
         _, self.issue_key = parse_jira_url(self.url)
-        issue = self.client.get_issue(self.issue_key)
+        try:
+            issue = self.client.get_issue(self.issue_key)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status != 404 or not self._is_service_desk():
+                raise
+            return self._fetch_service_desk()
         comments = self.client.get_comments(self.issue_key)
 
         if comments:
@@ -97,6 +105,58 @@ class JiraDumper(BaseDumper):
 
         return result
 
+    def _is_service_desk(self) -> bool:
+        """Whether a platform-API 404 may be a portal customer's request.
+
+        The 404 body is the same for a missing issue and a hidden one, so
+        decide by project: a portal URL names a service desk outright;
+        otherwise the project must be among the (cached) service desks
+        visible to the caller.  An ordinary project's 404 stays a 404.
+        """
+        if is_portal_url(self.url):
+            return True
+        assert self.client is not None
+        keys = service_desk_keys(self.client.base_url, self.client.get_service_desk_project_keys)
+        return project_key(self.issue_key) in keys
+
+    def _fetch_service_desk(self) -> dict:
+        assert self.client is not None
+        client = self.client
+        key = self.issue_key
+        request, comments, attachments = parallel_map(
+            lambda fn: fn(key),
+            [client.get_request, client.get_request_comments, client.get_request_attachments],
+        )
+        raw = to_issue(client.base_url, request, comments, attachments)
+        self.log(f"🎫 {key}: read through the service desk customer API")
+        self.summary.add_note(
+            "read via service desk customer API (no Browse permission): "
+            "portal view only, internal comments and agent-only fields not included"
+        )
+        if raw["comments"]:
+            self.summary.add_note(f"{len(raw['comments'])} comments")
+
+        custom_fields: list[dict] = []
+        for field in raw.pop("request_fields"):
+            if field["html"]:
+                content = _html_to_md(field["html"])
+            else:
+                content = _serialize_plain_field(field["value"])
+            if content:
+                custom_fields.append(
+                    {"key": field["key"], "name": field["name"], "content": content, "type": "request"}
+                )
+            elif field["value"] not in (None, "", []):
+                reason = f"unsupported type: {type(field['value']).__name__}"
+                self.warn(f"  ⚠ request field omitted: {field['name']} ({field['key']}): {reason}")
+                self.summary.add_note(f"request field omitted: {field['name']} ({field['key']}) — {reason}")
+        raw["custom_fields"] = custom_fields
+        raw["names"] = {}
+
+        if self.debug and self.output:
+            self._save_debug_html({"renderedFields": raw["rendered"]}, raw["comments"])
+        return raw
+
     def transform(self, raw: dict) -> str:
         key = raw["key"]
         fields = raw["fields"]
@@ -115,7 +175,7 @@ class JiraDumper(BaseDumper):
         created = fields.get("created", "")
         updated = fields.get("updated", "")
         site, _ = parse_jira_url(self.url)
-        issue_url = f"{site}/browse/{key}"
+        issue_url = raw.get("url") or f"{site}/browse/{key}"
 
         # Description: prefer rendered HTML → markdown, fallback to plain text
         description_html = rendered.get("description", "")

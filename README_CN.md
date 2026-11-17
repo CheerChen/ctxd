@@ -67,7 +67,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 | GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
 | Slack Thread | `https://*.slack.com/archives/...` 或 `.../client/.../thread/...` |
 | Confluence | `https://*.atlassian.net/wiki/...` |
-| Jira | `https://*.atlassian.net/browse/<KEY>` |
+| Jira | `https://*.atlassian.net/browse/<KEY>`、`https://*.atlassian.net/servicedesk/customer/portal/<id>/<KEY>` |
 
 ## 安装
 
@@ -326,6 +326,12 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 下载目录为 `<输出文件名>_attachments/`，文件名为 `<附件 id>-<原文件名>`，同名上传不会互相覆盖。描述、评论、自定义字段中的附件 URL 会被改写为本地相对路径；下载失败的条目保留原始远程 URL。
 
 > **注意**：`-i` / `--all-attachments` 需要配合 `-o <文件>` 或 `-O`。当 Issue 有附件而两个 flag 都没传时，运行摘要会说明跳过了几个附件、该用哪个 flag。
+
+### Service desk 请求
+
+通过 Jira Service Management 门户提交的请求，即使你只是它的客户（customer）也能导出。平台 API 对客户返回 404（没有 Browse 权限），与 issue 不存在无法区分，所以 `ctxd` 按项目判断：只有 URL 是门户链接（`/servicedesk/customer/portal/<id>/<KEY>`），或者项目属于你可见的 service desk 时，404 才改走 service desk 客户 API 重试。可见的 service desk 列表只取一次，在 `~/.cache/ctxd/`（遵循 `$XDG_CACHE_HOME`）缓存一天，所以普通项目里真正的 404 不会多发请求。该 service desk 的 agent 仍走平台 API 完整导出，包含内部评论。
+
+客户视图的信息比 agent 视图少，输出会明确标出：assignee、priority、labels、components 和更新时间显示为 `(not visible in portal)`，评论只有公开评论，运行摘要会注明是通过客户 API 读取的。summary 和 description 以外的请求表单字段按门户上的标签名导出。
 
 ---
 

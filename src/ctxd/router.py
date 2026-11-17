@@ -18,6 +18,7 @@ ROUTES: list[tuple[re.Pattern[str], Source]] = [
     (re.compile(r"https?://[^/]*slack\.com/.*(archives|client)/"), Source.SLACK_THREAD),
     (re.compile(r"https?://[^/]*atlassian\.net/wiki/"), Source.CONFLUENCE),
     (re.compile(r"https?://[^/]*atlassian\.net/browse/"), Source.JIRA),
+    (re.compile(r"https?://[^/]*atlassian\.net/servicedesk/customer/portal/\d+/[A-Z]"), Source.JIRA),
 ]
 
 

@@ -13,6 +13,7 @@ Supported URL patterns:
 - `https://*.slack.com/archives/...` or `https://*.slack.com/client/.../thread/...` — Slack thread
 - `https://*.atlassian.net/wiki/...` — Confluence page
 - `https://*.atlassian.net/browse/<KEY>` — Jira issue
+- `https://*.atlassian.net/servicedesk/customer/portal/<id>/<KEY>` — Jira Service Management request (read through the customer API when you are only its customer)
 
 GitHub support is **pull requests only**. Repo, file, blob, issue, gist, and commit URLs are **not** supported — `ctxd` exits with `Unsupported URL`. To read a public repo file or README, fetch the raw URL with `curl` / WebFetch instead; do not route it through `ctxd`.
 

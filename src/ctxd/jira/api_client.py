@@ -85,3 +85,41 @@ class JiraClient:
                 break
 
         return all_comments
+
+    # -- Jira Service Management (customer portal) API ----------------------
+    # A portal customer has no Browse permission on the project, so the
+    # platform API above answers 404; /rest/servicedeskapi/ serves the same
+    # request as the portal shows it (public comments only).
+
+    def _servicedesk_pages(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        start = 0
+        while True:
+            query = {**(params or {}), "start": str(start), "limit": "100"}
+            resp = self.session.get(f"{self.base_url}{path}", params=query, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            page = data.get("values", [])
+            values.extend(page)
+            if data.get("isLastPage", True) or not page:
+                return values
+            start += len(page)
+
+    def get_service_desk_project_keys(self) -> list[str]:
+        desks = self._servicedesk_pages("/rest/servicedeskapi/servicedesk")
+        return [d["projectKey"] for d in desks if d.get("projectKey")]
+
+    def get_request(self, issue_key: str) -> dict[str, Any]:
+        url = f"{self.base_url}/rest/servicedeskapi/request/{issue_key}"
+        params = {"expand": "renderedFieldValues,requestType,status,participant"}
+        resp = self.session.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_request_comments(self, issue_key: str) -> list[dict[str, Any]]:
+        return self._servicedesk_pages(
+            f"/rest/servicedeskapi/request/{issue_key}/comment", {"expand": "renderedBody"}
+        )
+
+    def get_request_attachments(self, issue_key: str) -> list[dict[str, Any]]:
+        return self._servicedesk_pages(f"/rest/servicedeskapi/request/{issue_key}/attachment")

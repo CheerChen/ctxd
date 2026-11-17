@@ -20,10 +20,15 @@ from ctxd.attachments import sanitize_attachment_name
 
 # Attachment URL forms seen in rendered Jira HTML / Markdown.
 # The API version varies (2 or 3); a thumbnail carries the same id as the
-# full-size file, so both resolve to the same downloaded copy.
+# full-size file, so both resolve to the same downloaded copy.  Service
+# desk requests read through the customer API reference attachments by
+# portal URL (/servicedesk/customer/request/<req>/attachment/<id>) and
+# download them from /rest/servicedeskapi/request/<req>/attachment/<id>.
 _ATTACHMENT_URL_RE = re.compile(
     r"(?:https?://[^\s)\"']+)?"
-    r"/rest/api/\d+/attachment/(?:content|thumbnail)/(?P<id>\d+)"
+    r"(?:/rest/api/\d+/attachment/(?:content|thumbnail)/"
+    r"|/(?:servicedesk/customer|rest/servicedeskapi)/request/\d+/attachment/)"
+    r"(?P<id>\d+)(?:/thumbnail)?"
 )
 
 _IMAGE_MIME_PREFIX = "image/"
