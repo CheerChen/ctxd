@@ -288,3 +288,39 @@ def test_single_page_transform_fetches_independent_parts_concurrently() -> None:
     assert "| **Author** | Test Author |" in result
     assert "name-acc-commenter" in result
     assert set(calls[:5]) == {"space", "author", "attachments", "inline", "footer"}
+
+
+def test_only_comments_skips_the_body_and_line_numbers() -> None:
+    from ctxd.dumpers.confluence import ConfluenceDumper
+
+    client = MagicMock()
+    client.base_url = "https://example.atlassian.net"
+    client.get_page.return_value = _make_page(version_created_at="2026-03-07T00:00:00.000Z")
+    client.get_user_display_name.side_effect = lambda account_id: f"name-{account_id}"
+    client.get_inline_comments.return_value = [{
+        "id": "i1",
+        "version": {"authorId": "acc-1", "createdAt": "2026-03-05T00:00:00.000Z"},
+        "properties": {"inline-original-selection": "sync-password Lambda", "inline-marker-ref": "m1"},
+        "body": {"storage": {"value": "<p>Reuse it?</p>"}},
+    }]
+    client.get_footer_comments.return_value = []
+    client.get_comment_children.side_effect = lambda comment_id, comment_type="footer": (
+        [{"id": "r1", "version": {"authorId": "acc-2", "createdAt": "2026-03-06T00:00:00.000Z"},
+          "body": {"storage": {"value": "<p>No, new one.</p>"}}}] if comment_id == "i1" else []
+    )
+    dumper = ConfluenceDumper(
+        url="https://example.atlassian.net/wiki/spaces/TEST/pages/123/Example",
+        output=None, fmt="md", quiet=True, only_comments=True,
+    )
+    dumper.client = client
+
+    result = dumper.transform(dumper.fetch())
+
+    client.get_page.assert_called_once_with("123", body=False)
+    client.get_attachments.assert_not_called()
+    assert "> sync-password Lambda\n" in result and "(Line" not in result
+    assert "name-acc-1" in result and "No, new one." in result
+    assert "## Comments (2)" in result
+    assert "hello" not in result
+    assert "edited after its latest comment" in result
+    assert dumper.default_filename() == "confluence-123.comments.md"

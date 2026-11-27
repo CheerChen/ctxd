@@ -184,3 +184,17 @@ def test_portal_attachment_urls_are_recognised() -> None:
     out = rewrite_attachment_links(html, {"546997": "a/546997-shot.png", "546998": "a/546998-x.png"})
     assert 'src="a/546997-shot.png"' in out
     assert 'src="a/546998-x.png"' in out
+
+
+def test_only_comments_skips_portal_attachments() -> None:
+    from ctxd.dumpers.jira import JiraDumper
+
+    client = _client(service_desks=["SECURITY"])
+    dumper = JiraDumper(url=PORTAL_URL, output=None, fmt="md", only_comments=True)
+    dumper.client = client
+
+    result = dumper.transform(dumper.fetch())
+
+    client.get_request_attachments.assert_not_called()
+    assert "Masking audit" in result and "ok" in result
+    assert "rendered" not in result

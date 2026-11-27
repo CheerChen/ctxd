@@ -409,3 +409,81 @@ class TestJiraOmittedFieldsInSummary:
         result = dumper.transform(raw)
         assert "Extra Info" in result
         assert "A plain text field value" in result
+
+
+# ---------------------------------------------------------------------------
+# --only comments
+# ---------------------------------------------------------------------------
+
+def _only_comments_dumper(fmt: str = "md"):
+    from ctxd.dumpers.jira import JiraDumper
+
+    dumper = JiraDumper(
+        url="https://example.atlassian.net/browse/DEV-42", output=None, fmt=fmt,
+        only_comments=True,
+    )
+    dumper.client = MagicMock()
+    dumper.client.get_issue.return_value = {
+        "key": "DEV-42",
+        "fields": {
+            "summary": "Fix login", "status": {"name": "In Review"},
+            "assignee": {"displayName": "Alice"}, "updated": "2026-03-10T12:00:00.000+0900",
+        },
+    }
+    dumper.client.get_comments.return_value = [
+        {
+            "author": {"displayName": "Bob"},
+            "created": "2026-03-05T09:00:00.000+0900",
+            "updated": "2026-03-06T09:00:00.000+0900",
+            "renderedBody": "<p>Deployed to <strong>dev</strong>.</p>",
+        },
+    ]
+    return dumper
+
+
+def test_only_comments_requests_header_fields_only() -> None:
+    dumper = _only_comments_dumper()
+
+    dumper.fetch()
+
+    dumper.client.get_issue.assert_called_once_with("DEV-42", fields="summary,status,assignee,updated")
+    assert any("--only comments" in note for note in dumper.summary.notes)
+
+
+@pytest.mark.parametrize("fmt", ["md", "text"])
+def test_only_comments_renders_header_and_comments_without_body(fmt) -> None:
+    dumper = _only_comments_dumper(fmt)
+
+    result = dumper.transform(dumper.fetch())
+
+    assert "[DEV-42] Fix login" in result
+    assert "In Review" in result and "Alice" in result
+    assert "Deployed to **dev**." in result
+    assert "2026-03-05T09:00:00.000+0900 (edited 2026-03-06T09:00:00.000+0900)" in result
+    assert "Comments only" in result
+    assert "Description" not in result and "DESCRIPTION" not in result
+
+
+def test_only_comments_flags_an_issue_updated_after_its_latest_comment() -> None:
+    dumper = _only_comments_dumper()
+    stale_hint = "updated after its latest comment"
+
+    assert stale_hint in dumper.transform(dumper.fetch())
+
+    dumper.client.get_issue.return_value["fields"]["updated"] = "2026-03-06T09:00:00.500+0900"
+    assert stale_hint not in dumper.transform(dumper.fetch())
+
+
+def test_only_comments_without_comments_says_so() -> None:
+    dumper = _only_comments_dumper()
+    dumper.client.get_comments.return_value = []
+
+    result = dumper.transform(dumper.fetch())
+
+    assert "## Comments (0)" in result and "No comments." in result
+
+
+def test_only_comments_default_filename_does_not_clobber_the_full_export() -> None:
+    dumper = _only_comments_dumper()
+
+    assert dumper.default_filename() == "jira-DEV-42.comments.md"

@@ -105,6 +105,19 @@ The output's own `Last Message ts` is the cursor for the next follow-up. Edits
 to earlier messages are not visible this way; re-run without `--since` if the
 user says an earlier message changed.
 
+Jira issue or Confluence page whose body is already in context — a ticket you
+are following just got a reply, or a page you wrote got review comments —
+fetch only the comments instead of the whole export again:
+
+```bash
+ctxd '<jira-or-confluence-url>' -f text --only comments
+```
+
+Do not use it for a first read. The header carries the status / version and
+the last update; if it says the issue or page changed after its latest
+comment, re-run without `--only comments` before relying on the body you
+read earlier.
+
 Attachments are never downloaded by default. When an issue or page has
 attachments that were skipped, the run summary says so — read it before
 concluding that content is missing.

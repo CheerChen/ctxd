@@ -19,9 +19,10 @@ class JiraClient:
         mount_retry(self.session)
         instrument_session(self.session, "jira")
 
-    def get_issue(self, issue_key: str) -> dict[str, Any]:
+    def get_issue(self, issue_key: str, fields: str | None = None) -> dict[str, Any]:
+        """The issue with rendered fields, or only *fields* (comma-separated, raw)."""
         url = f"{self.base_url}/rest/api/2/issue/{issue_key}"
-        params = {"expand": "renderedFields,names"}
+        params = {"fields": fields} if fields else {"expand": "renderedFields,names"}
         resp = self.session.get(url, params=params, timeout=30)
         resp.raise_for_status()
         return resp.json()

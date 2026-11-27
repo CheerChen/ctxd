@@ -222,7 +222,7 @@ def test_single_file_output_writes_markdown_and_sibling_assets(tmp_path: Path) -
         quiet=True, all_attachments=True,
     )
     client = _FakeClient([_PDF, _PNG])
-    client.get_page = lambda page_id: {"id": "999", "title": "Page", "body": {"storage": {"value": _HTML_WITH_IMAGE}}}
+    client.get_page = lambda page_id, body=True: {"id": "999", "title": "Page", "body": {"storage": {"value": _HTML_WITH_IMAGE}}}
     dumper.client = client
     dumper.validate_auth = lambda: None
     dumper.summary = Summary(source="confluence")

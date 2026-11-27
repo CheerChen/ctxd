@@ -56,7 +56,7 @@ class TestConfluenceDirectoryExportReal:
         d.client.get_descendants = MagicMock(return_value=descendants)
 
         # get_page is called for root (always) and for page 3 (no body).
-        def mock_get_page(pid):
+        def mock_get_page(pid, body=True):
             if pid == "123":
                 return root_page
             if pid == "3":
@@ -187,7 +187,7 @@ class TestRecursiveCLIReal:
         class FakeJiraClient:
             def __init__(self, base_url="", email="", api_token=""):
                 pass
-            def get_issue(self, key):
+            def get_issue(self, key, fields=None):
                 return {
                     "key": key,
                     "fields": {
@@ -213,7 +213,7 @@ class TestRecursiveCLIReal:
             base_url = "https://test.atlassian.net"
             def __init__(self, base_url="", email="", api_token=""):
                 pass
-            def get_page(self, pid):
+            def get_page(self, pid, body=True):
                 return {
                     "id": pid, "title": "Child Page",
                     "body": {"storage": {"value": "<p>See https://github.com/o/r/pull/42</p>"}},
