@@ -310,3 +310,22 @@ def _apply_stdout_limit(
         )
 
     return result
+
+
+def is_later(a: str, b: str) -> bool:
+    """Whether API timestamp *a* is more than a second after *b*.
+
+    Accepts Confluence ``…Z`` and Jira ``…+0900`` offsets (Python 3.10's
+    ``fromisoformat`` takes neither).  Missing or unparseable values compare
+    as not later, so a format surprise drops a hint instead of inventing one.
+    """
+    from datetime import datetime
+
+    def parse(ts: str) -> datetime:
+        ts = re.sub(r"Z$", "+00:00", ts)
+        return datetime.fromisoformat(re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", ts))
+
+    try:
+        return (parse(a) - parse(b)).total_seconds() > 1
+    except (TypeError, ValueError):
+        return False

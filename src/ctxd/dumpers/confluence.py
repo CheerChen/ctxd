@@ -18,7 +18,7 @@ from ctxd.confluence.api_client import (
 )
 from ctxd.confluence.converter import comments_to_markdown, extract_confluence_images, html_to_markdown
 from ctxd.confluence.url_parser import is_short_link, parse_confluence_url, parse_short_link
-from ctxd.dumpers.base import BaseDumper
+from ctxd.dumpers.base import BaseDumper, is_later
 from ctxd.profiling import timed
 from ctxd.summary import ExportResult, PageStatus, Summary
 
@@ -68,9 +68,11 @@ class ConfluenceDumper(BaseDumper):
         include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
+        only_comments: bool = False,
         **kwargs,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
+        self.only_comments = only_comments
         self.recursive = recursive
         self.include_images = include_images
         self.all_attachments = all_attachments
@@ -115,9 +117,12 @@ class ConfluenceDumper(BaseDumper):
             # Short link cannot be resolved yet (no auth at this point); fall
             # back to the token so auto-output still produces a usable name.
             _, token = parse_short_link(self.url)
-            return f"confluence-{token}"
-        _, page_id = parse_confluence_url(self.url)
-        return f"confluence-{page_id}"
+            name = f"confluence-{token}"
+        else:
+            _, page_id = parse_confluence_url(self.url)
+            name = f"confluence-{page_id}"
+        # A comments-only export is one file, never the page's export directory.
+        return f"{name}.comments.md" if self.only_comments else name
 
     def fetch(self) -> dict:
         if self.client is None:
@@ -125,7 +130,7 @@ class ConfluenceDumper(BaseDumper):
 
         _, page_id = parse_confluence_url(self.url)
         with timed("confluence.get_root_page"):
-            root_page = self.client.get_page(page_id)
+            root_page = self.client.get_page(page_id, body=not self.only_comments)
         if self.recursive:
             with timed("confluence.get_descendants"):
                 descendants = self.client.get_descendants(page_id)
@@ -147,6 +152,8 @@ class ConfluenceDumper(BaseDumper):
         page = raw["pages"][0]
         page_id = page["id"]
         title = page.get("title", "Untitled")
+        if self.only_comments:
+            return self._format_comments_only(page, page_id, title)
 
         html_content = page.get("body", {}).get("storage", {}).get("value")
         if html_content is None:
@@ -177,6 +184,48 @@ class ConfluenceDumper(BaseDumper):
             result += f"\n\n---\n\n## Comments\n\n{comments_md}"
 
         return result
+
+    def _format_comments_only(self, page: dict, page_id: str, title: str) -> str:
+        """Header the reader can judge staleness by, then both comment kinds.
+
+        Inline comments keep the text they annotate but no line numbers:
+        those point into a body this output does not contain.
+        """
+        client = self.client
+        assert client is not None
+        notes = self.summary.notes
+        inline, footer = parallel_map(
+            lambda kind: self._fetch_comments(page_id, kind, notes), ["inline", "footer"],
+        )
+        parallel_map(client.get_user_display_name, sorted(_comment_author_ids(inline + footer)))
+        total = _count_comments(inline) + _count_comments(footer)
+        notes.append(f"{total} comments (inline and footer, replies included)")
+        notes.append("--only comments: page body and attachments not exported")
+
+        version = page.get("version") or {}
+        modified = version.get("createdAt") or ""
+        latest = max(_comment_times(inline + footer), default="")
+        webui = (page.get("_links") or {}).get("webui") or ""
+        lines = [
+            f"# {title}",
+            "",
+            f"- **Version:** {version.get('number', 'Unknown')}",
+            f"- **Last Modified:** {modified or 'Unknown'}",
+            f"- **Latest comment:** {latest or 'None'}",
+            f"- **URL:** {client.base_url}/wiki{webui}" if webui else "- **URL:** Unknown",
+            "",
+            "> Comments only: the page body and attachments are not included; "
+            "inline comments quote the text they annotate.",
+        ]
+        if is_later(modified, latest):
+            lines.append(
+                "> The page was edited after its latest comment. "
+                "Re-run without --only comments to see the current body."
+            )
+        lines += ["", f"## Comments ({total})", ""]
+        comments_md = self._format_comments(page_id, inline, footer, notes_out=notes)
+        lines.append(comments_md or "No comments.\n")
+        return "\n".join(lines)
 
     def _prefetch_page(
         self, page: dict, page_id: str, notes_out: list[str],
@@ -212,7 +261,8 @@ class ConfluenceDumper(BaseDumper):
         with timed("stage.fetch"):
             raw = self.fetch()
 
-        if not self.output:
+        # Comments-only output is always one file (or stdout), never a page directory.
+        if not self.output or self.only_comments:
             with timed("stage.transform"):
                 content = self.transform(raw)
             self.summary.resources_fetched = 1
@@ -775,6 +825,21 @@ class ConfluenceDumper(BaseDumper):
             "",
         ]
         return "\n".join(lines)
+
+
+def _count_comments(comments: list[dict]) -> int:
+    return sum(1 + _count_comments(c.get("_children") or []) for c in comments)
+
+
+def _comment_times(comments: list[dict]) -> list[str]:
+    """Last-version times of *comments* and their attached replies."""
+    times: list[str] = []
+    for comment in comments:
+        created = (comment.get("version") or {}).get("createdAt")
+        if created:
+            times.append(created)
+        times += _comment_times(comment.get("_children") or [])
+    return times
 
 
 def _comment_author_ids(comments: list[dict]) -> set[str]:

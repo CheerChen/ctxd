@@ -77,7 +77,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 | Guide | Contents |
 |-------|----------|
 | [Authentication & Configuration](docs/auth.md) | Token types, required scopes, SAML SSO, config file precedence |
-| [CLI Reference](docs/cli.md) | Global flags, per-source options, Slack `--since`, Confluence layouts, cross-source recursion, `manifest.json` & size caps |
+| [CLI Reference](docs/cli.md) | Global flags, per-source options, Slack `--since`, Confluence / Jira `--only comments`, Confluence layouts, cross-source recursion, `manifest.json` & size caps |
 | [Agent Skill](skills/ctxd/SKILL.md) | Prompt instructions and default flag conventions for AI coding agents |
 | [Benchmarks](bench/results/) | Reproducible wall-time, request-count, and memory measurements (`uv run scripts/bench.py`) |
 

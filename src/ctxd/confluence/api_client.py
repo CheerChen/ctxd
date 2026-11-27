@@ -112,8 +112,10 @@ class ConfluenceClient:
 
         return self._locked_compute(self._space_cache, space_id, "space", fetch)
 
-    def get_page(self, page_id: str) -> dict[str, Any]:
-        url = f"{self.base_url}/wiki/api/v2/pages/{page_id}?body-format=storage"
+    def get_page(self, page_id: str, body: bool = True) -> dict[str, Any]:
+        url = f"{self.base_url}/wiki/api/v2/pages/{page_id}"
+        if body:
+            url += "?body-format=storage"
         resp = self.session.get(url, timeout=30)
         resp.raise_for_status()
         return resp.json()

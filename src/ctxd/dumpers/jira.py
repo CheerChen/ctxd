@@ -10,7 +10,7 @@ import requests
 from ctxd.attachments import format_size
 from ctxd.auth import ensure_jira_auth
 from ctxd.concurrency import parallel_map
-from ctxd.dumpers.base import BaseDumper
+from ctxd.dumpers.base import BaseDumper, is_later
 from ctxd.jira.api_client import JiraClient
 from ctxd.jira.attachments import (
     JiraAttachment,
@@ -22,6 +22,10 @@ from ctxd.jira.attachments import (
 from ctxd.jira.converter import preprocess_jira_html
 from ctxd.jira.servicedesk import service_desk_keys, to_issue
 from ctxd.jira.url_parser import is_portal_url, parse_jira_url, project_key
+
+# Fields the --only comments header needs; the body, links and custom
+# fields are not requested at all.
+_HEADER_FIELDS = "summary,status,assignee,updated"
 
 
 class JiraDumper(BaseDumper):
@@ -35,6 +39,7 @@ class JiraDumper(BaseDumper):
         include_images: bool = False,
         all_attachments: bool = False,
         debug: bool = False,
+        only_comments: bool = False,
         **kwargs,
     ):
         super().__init__(url=url, output=output, fmt=fmt, quiet=quiet, verbose=verbose, **kwargs)
@@ -43,6 +48,7 @@ class JiraDumper(BaseDumper):
         self.include_images = include_images
         self.all_attachments = all_attachments
         self.debug = debug
+        self.only_comments = only_comments
 
     def validate_auth(self) -> None:
         base_url, email, token = ensure_jira_auth()
@@ -51,7 +57,9 @@ class JiraDumper(BaseDumper):
     def default_filename(self) -> str:
         _, issue_key = parse_jira_url(self.url)
         ext = "md" if self.fmt == "md" else "txt"
-        return f"jira-{issue_key}.{ext}"
+        # Never overwrite the full export with a comments-only one.
+        suffix = ".comments" if self.only_comments else ""
+        return f"jira-{issue_key}{suffix}.{ext}"
 
     def fetch(self) -> dict:
         self.summary.source = "jira"
@@ -61,7 +69,9 @@ class JiraDumper(BaseDumper):
 
         _, self.issue_key = parse_jira_url(self.url)
         try:
-            issue = self.client.get_issue(self.issue_key)
+            issue = self.client.get_issue(
+                self.issue_key, fields=_HEADER_FIELDS if self.only_comments else None
+            )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else None
             if status != 404 or not self._is_service_desk():
@@ -71,6 +81,11 @@ class JiraDumper(BaseDumper):
 
         if comments:
             self.summary.add_note(f"{len(comments)} comments")
+
+        if self.only_comments:
+            self.summary.add_note(_ONLY_COMMENTS_NOTE)
+            return {"key": issue.get("key", self.issue_key), "fields": issue.get("fields", {}),
+                    "rendered": {}, "comments": comments}
 
         fields = issue.get("fields", {})
         rendered = issue.get("renderedFields", {})
@@ -123,10 +138,11 @@ class JiraDumper(BaseDumper):
         assert self.client is not None
         client = self.client
         key = self.issue_key
-        request, comments, attachments = parallel_map(
-            lambda fn: fn(key),
-            [client.get_request, client.get_request_comments, client.get_request_attachments],
-        )
+        fetchers = [client.get_request, client.get_request_comments]
+        if not self.only_comments:
+            fetchers.append(client.get_request_attachments)
+        request, comments, *rest = parallel_map(lambda fn: fn(key), fetchers)
+        attachments = rest[0] if rest else []
         raw = to_issue(client.base_url, request, comments, attachments)
         self.log(f"🎫 {key}: read through the service desk customer API")
         self.summary.add_note(
@@ -135,6 +151,10 @@ class JiraDumper(BaseDumper):
         )
         if raw["comments"]:
             self.summary.add_note(f"{len(raw['comments'])} comments")
+        if self.only_comments:
+            self.summary.add_note(_ONLY_COMMENTS_NOTE)
+            raw.pop("request_fields")
+            return raw
 
         custom_fields: list[dict] = []
         for field in raw.pop("request_fields"):
@@ -158,6 +178,8 @@ class JiraDumper(BaseDumper):
         return raw
 
     def transform(self, raw: dict) -> str:
+        if self.only_comments:
+            return self._format_comments_only(raw)
         key = raw["key"]
         fields = raw["fields"]
         rendered = raw["rendered"]
@@ -336,17 +358,7 @@ class JiraDumper(BaseDumper):
                 created_at = comment.get("created", "")
                 lines.append(f"### {author} — {created_at}")
                 lines.append("")
-                # Prefer rendered body
-                rendered_body = ""
-                if i < len(rendered_comment_list):
-                    rendered_body = rendered_comment_list[i].get("renderedBody", "")
-                if not rendered_body:
-                    rendered_body = comment.get("renderedBody", "")
-                if rendered_body:
-                    body_md = _html_to_md(rendered_body)
-                else:
-                    body_md = comment.get("body", "(empty)")
-                lines.append(_blockquote(body_md))
+                lines.append(_blockquote(_comment_body(comment, i, rendered_comment_list)))
                 lines.append("")
 
         return "\n".join(lines)
@@ -438,19 +450,59 @@ class JiraDumper(BaseDumper):
                 author = _display_name(comment.get("author"))
                 created_at = comment.get("created", "")
                 lines.append(f"[{author}] {created_at}")
-                rendered_body = ""
-                if i < len(rendered_comment_list):
-                    rendered_body = rendered_comment_list[i].get("renderedBody", "")
-                if not rendered_body:
-                    rendered_body = comment.get("renderedBody", "")
-                if rendered_body:
-                    body_md = _html_to_md(rendered_body)
-                else:
-                    body_md = comment.get("body", "(empty)")
+                body_md = _comment_body(comment, i, rendered_comment_list)
                 for body_line in body_md.splitlines():
                     lines.append(f"    {body_line}")
                 lines.append("")
 
+        return "\n".join(lines)
+
+    def _format_comments_only(self, raw: dict) -> str:
+        """Header the reader can judge staleness by, then the comments."""
+        key = raw["key"]
+        fields = raw["fields"]
+        comments = raw["comments"]
+        site, _ = parse_jira_url(self.url)
+        updated = fields.get("updated", "")
+        latest = max((c.get("updated") or c.get("created") or "" for c in comments), default="")
+        header = [
+            ("Status", _nested_name(fields.get("status"))),
+            ("Assignee", _display_name(fields.get("assignee"))),
+            ("Updated", updated),
+            ("Latest comment", latest or "None"),
+            ("URL", raw.get("url") or f"{site}/browse/{key}"),
+        ]
+        notice = [ONLY_COMMENTS_NOTICE]
+        if is_later(updated, latest):
+            notice.append(
+                "The issue was updated after its latest comment: the description, status or "
+                "other fields may have changed. Re-run without --only comments to see them."
+            )
+
+        title = f"[{key}] {fields.get('summary', 'Untitled')}"
+        if self.fmt == "md":
+            lines = [f"# {title}", ""]
+            lines += [f"- **{name}:** {value}" for name, value in header]
+            lines += ["", *(f"> {n}" for n in notice), "", f"## Comments ({len(comments)})", ""]
+            if not comments:
+                lines += ["No comments.", ""]
+            for comment in comments:
+                lines.append(f"### {_display_name(comment.get('author'))} — {_comment_time(comment)}")
+                lines.append("")
+                lines.append(_blockquote(_comment_body(comment)))
+                lines.append("")
+            return "\n".join(lines)
+
+        rule = "#" * 80
+        lines = [rule, f"# JIRA ISSUE: {title}", rule, ""]
+        lines += [f"{name + ':':<16}{value}" for name, value in header]
+        lines += ["", *notice, "", f"--- COMMENTS ({len(comments)}) ---", ""]
+        if not comments:
+            lines += ["No comments.", ""]
+        for comment in comments:
+            lines.append(f"[{_display_name(comment.get('author'))}] {_comment_time(comment)}")
+            lines += [f"    {line}" for line in _comment_body(comment).splitlines()]
+            lines.append("")
         return "\n".join(lines)
 
     def _attachment_target(self) -> tuple[Path, str] | None:
@@ -575,6 +627,33 @@ class JiraDumper(BaseDumper):
         from ctxd.dumpers.base import _atomic_write_text
         _atomic_write_text(debug_path, "".join(parts))
         self.log(f"🔍 Debug HTML saved to {debug_path}")
+
+
+ONLY_COMMENTS_NOTICE = (
+    "Comments only: the description, fields, links and attachments are not included."
+)
+_ONLY_COMMENTS_NOTE = "--only comments: description, fields, links and attachments not exported"
+
+
+def _comment_body(comment: dict, index: int = 0, rendered_list: list[dict] | None = None) -> str:
+    """Markdown body of a comment: rendered HTML if any, else the raw body."""
+    rendered_body = ""
+    if rendered_list and index < len(rendered_list):
+        rendered_body = rendered_list[index].get("renderedBody", "")
+    if not rendered_body:
+        rendered_body = comment.get("renderedBody", "")
+    if rendered_body:
+        return _html_to_md(rendered_body)
+    return comment.get("body", "(empty)")
+
+
+def _comment_time(comment: dict) -> str:
+    """Creation time, plus the edit time when the comment was changed later."""
+    created = comment.get("created", "")
+    updated = comment.get("updated", "")
+    if is_later(updated, created):
+        return f"{created} (edited {updated})"
+    return created
 
 
 def _issue_link_parts(link: dict) -> tuple[str, dict | None]:

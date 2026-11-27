@@ -77,7 +77,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 -i -O
 | 文档 | 内容 |
 |------|------|
 | [认证与配置](docs/auth_cn.md) | 各平台 Token 类型、权限 Scope、SAML SSO 授权、环境变量优先级 |
-| [CLI 参考手册](docs/cli_cn.md) | 通用参数、各数据源专属参数、Slack `--since` 增量跟进、Confluence 目录规则、跨源递归、`manifest.json` 与体积上限 |
+| [CLI 参考手册](docs/cli_cn.md) | 通用参数、各数据源专属参数、Slack `--since` 增量跟进、Confluence / Jira `--only comments` 只取评论、Confluence 目录规则、跨源递归、`manifest.json` 与体积上限 |
 | [Agent Skill](skills/ctxd/SKILL.md) | 面向 AI 编程助手的调用约定与默认参数说明 |
 | [性能基准](bench/results/) | 各场景耗时、请求数与峰值内存实测记录（`uv run scripts/bench.py`） |
 

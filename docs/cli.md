@@ -102,6 +102,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attach
 | `-i, --include-images / --no-include-images` | Download referenced images (default: off) |
 | `--all-attachments` | Download every attachment — images to `images/`, other files (PDF, spreadsheets, …) to `attachments/` (default: off) |
 | `--debug` | Save raw HTML for debugging |
+| `--only comments` | Export only the comments, under a short header; see [Comments only](#comments-only---only-comments) |
 
 ### Output layout & attachments
 
@@ -127,6 +128,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
 | `-i, --include-images / --no-include-images` | Download images referenced from the issue body (default: off) |
 | `--all-attachments` | Download every attachment on the issue (default: off) |
 | `--debug` | Save raw HTML for debugging |
+| `--only comments` | Export only the comments, under a short header; see [Comments only](#comments-only---only-comments) |
 
 - **Custom fields**: rich-text custom fields render as Markdown; serializable plain fields (strings, numbers, booleans, simple lists/dicts) are included too. Unsupported nested objects are omitted with a stderr warning and a summary note — never dropped silently.
 - **Attachments**: `-i` and `--all-attachments` require `-o <file>` or `-O`. Downloaded files land in `<output-stem>_attachments/<attachment-id>-<filename>`, and links in the description, comments, and custom fields are rewritten to local relative paths. Even when nothing is downloaded, every export ends with an `Attachments` inventory.
@@ -136,6 +138,23 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
 A request raised through a Jira Service Management portal is readable even when you are only its customer. The platform API answers a customer with 404 (no Browse permission), indistinguishable from a missing issue, so `ctxd` decides by project: on a 404 it retries through the service desk customer API only when the URL is a portal link (`/servicedesk/customer/portal/<id>/<KEY>`) or the project is one of the service desks visible to you. That list is fetched once and cached for a day in `~/.cache/ctxd/` (`$XDG_CACHE_HOME` respected), so a genuine 404 in an ordinary project costs no extra request. Agents of the service desk still get the full platform-API export, internal comments included.
 
 The customer view has less than the agent view, and the output says so: assignee, priority, labels, components and the update time show `(not visible in portal)`, comments are the public ones only, and the run summary notes that the request was read through the customer API. Request form fields other than summary and description are exported under their portal labels.
+
+---
+
+## Comments only (`--only comments`)
+
+For Confluence pages and Jira issues (service desk requests included), when the body is already in context and only the discussion is needed — a reply on a ticket you are following, review comments on a page you wrote. Not for a first read: comments rarely make sense without the body.
+
+```bash
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --only comments
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --only comments
+```
+
+- **Not requested at all**: the Jira description, custom fields, links, subtasks and attachments; the Confluence page body and attachments.
+- **Header**: Jira shows status, assignee, `Updated` and the latest comment time; Confluence shows the version, `Last Modified` and the latest comment time. When the issue or page changed after its latest comment, the output says so: the body or status may differ from what you read before, so re-run without `--only comments`.
+- **Comments**: all of them, with replies. A Jira comment edited after posting shows `(edited <time>)`. Confluence inline comments quote the text they annotate but carry no `(Line N)`, since those numbers point into the body.
+- **Output**: always one file, also for Confluence: `-O` writes `jira-<KEY>.comments.md` / `confluence-<id>.comments.md`, never overwriting the full export. With no comments, it prints the header and `No comments.`
+- **Rejected combinations**: Slack and GitHub PR URLs, and `-r`, `-i`, `--all-attachments`.
 
 ---
 

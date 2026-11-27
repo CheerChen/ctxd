@@ -102,6 +102,7 @@ ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --all-attach
 | `-i, --include-images / --no-include-images` | 下载正文引用的图片（默认关闭） |
 | `--all-attachments` | 下载全部附件：图片放 `images/`，其他文件（PDF、表格等）放 `attachments/`（默认关闭） |
 | `--debug` | 保存原始 HTML 用于排查 |
+| `--only comments` | 只导出评论和一个简短的头部，见 [只取评论](#只取评论--only-comments) |
 
 ### 输出目录结构与附件行为
 
@@ -127,6 +128,7 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
 | `-i, --include-images / --no-include-images` | 下载正文引用的图片（默认关闭） |
 | `--all-attachments` | 下载 Issue 上的全部附件（默认关闭） |
 | `--debug` | 保存原始 HTML 用于排查 |
+| `--only comments` | 只导出评论和一个简短的头部，见 [只取评论](#只取评论--only-comments) |
 
 - **自定义字段**：富文本自定义字段转为 Markdown；可序列化的普通字段（字符串、数字、布尔、简单列表/字典）一并导出。无法序列化的嵌套对象会省略，并在 stderr 告警、记入摘要 notes，绝不静默丢弃。
 - **附件落盘**：`-i` 与 `--all-attachments` 需配合 `-o <文件>` 或 `-O`。下载目录为 `<输出文件名>_attachments/<附件 id>-<原文件名>`，描述、评论与自定义字段中的链接会改写为本地相对路径；即使未下载文件，末尾也始终附有 `Attachments` 清单。
@@ -136,6 +138,23 @@ ctxd https://your-site.atlassian.net/browse/PROJECT-123 --all-attachments -O
 通过 Jira Service Management 门户提交的请求，即使你只是它的客户（customer）也能导出。平台 API 对客户返回 404（没有 Browse 权限），与 issue 不存在无法区分，所以 `ctxd` 按项目判断：只有 URL 是门户链接（`/servicedesk/customer/portal/<id>/<KEY>`），或者项目属于你可见的 service desk 时，404 才改走 service desk 客户 API 重试。可见的 service desk 列表只取一次，在 `~/.cache/ctxd/`（遵循 `$XDG_CACHE_HOME`）缓存一天，所以普通项目里真正的 404 不会多发请求。该 service desk 的 agent 仍走平台 API 完整导出，包含内部评论。
 
 客户视图的信息比 agent 视图少，输出会明确标出：assignee、priority、labels、components 和更新时间显示为 `(not visible in portal)`，评论只有公开评论，运行摘要会注明是通过客户 API 读取的。summary 和 description 以外的请求表单字段按门户上的标签名导出。
+
+---
+
+## 只取评论（`--only comments`）
+
+适用于 Confluence 页面和 Jira Issue（含 service desk 请求）：正文已经在上下文里，只需要看讨论，例如跟进中的票有了新回复、自己写的页面收到评审评论。第一次读不要用，评论离开正文通常看不懂。
+
+```bash
+ctxd https://your-site.atlassian.net/browse/PROJECT-123 --only comments
+ctxd https://your-site.atlassian.net/wiki/spaces/SPACE/pages/123456 --only comments
+```
+
+- **完全不请求**：Jira 的描述、自定义字段、链接、子任务和附件；Confluence 的页面正文和附件。
+- **头部**：Jira 给出状态、经办人、`Updated` 和最新评论时间；Confluence 给出版本号、`Last Modified` 和最新评论时间。Issue 或页面在最新评论之后还有改动时，输出会明确说明：正文或状态可能和之前读到的不同，需要去掉 `--only comments` 重读。
+- **评论**：全部评论及回复。Jira 评论发出后被编辑过的，标注 `(edited <时间>)`。Confluence 的 inline 评论引用被标注的原文，但不带 `(Line N)`，因为行号指向的是正文。
+- **输出**：始终是一个文件，Confluence 也一样：`-O` 写成 `jira-<KEY>.comments.md` / `confluence-<id>.comments.md`，不会覆盖完整导出。没有评论时输出头部和 `No comments.`
+- **拒绝的组合**：Slack 和 GitHub PR 的 URL，以及 `-r`、`-i`、`--all-attachments`。
 
 ---
 

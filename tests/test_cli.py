@@ -177,6 +177,57 @@ def test_file_writing_flag_with_auto_output_succeeds(fake_source, source, flag, 
 
 
 # ---------------------------------------------------------------------------
+# --only comments
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("source", [Source.CONFLUENCE, Source.JIRA])
+def test_only_comments_reaches_atlassian_dumpers(fake_source, source) -> None:
+    cls = fake_source(source)
+
+    result = _run(_URLS[source], "--only", "comments")
+
+    assert result.exit_code == 0, result.output
+    assert cls.instances[-1].kwargs["only_comments"] is True
+
+
+@pytest.mark.parametrize("source", [Source.SLACK_THREAD, Source.GITHUB_PR])
+def test_only_comments_on_other_sources_is_a_usage_error(fake_source, source) -> None:
+    cls = fake_source(source)
+
+    result = _run(_URLS[source], "--only", "comments")
+
+    assert result.exit_code == 2
+    assert "Confluence pages and Jira issues" in result.output
+    assert not cls.instances
+
+
+@pytest.mark.parametrize("source, flag", [
+    (Source.CONFLUENCE, "-r"),
+    (Source.CONFLUENCE, "-i"),
+    (Source.JIRA, "--all-attachments"),
+])
+def test_only_comments_rejects_body_and_attachment_flags(fake_source, source, flag) -> None:
+    fake_source(source)
+
+    result = _run(_URLS[source], "--only", "comments", flag, "-O")
+
+    assert result.exit_code == 2
+    assert f"drop {flag}" in result.output
+
+
+def test_confluence_only_comments_auto_output_is_a_file(fake_source) -> None:
+    cls = fake_source(Source.CONFLUENCE, "confluence-123.comments.md")
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["-O", "--only", "comments", _URLS[Source.CONFLUENCE]])
+
+        assert result.exit_code == 0, result.output
+        assert cls.instances[-1].output == "confluence-123.comments.md"
+        assert not Path("confluence-123.comments.md").is_dir()
+
+
+# ---------------------------------------------------------------------------
 # Quiet and init
 # ---------------------------------------------------------------------------
 

@@ -37,6 +37,8 @@ from ctxd.router import Source, detect
 @click.option("--raw", is_flag=True, default=False, help="Keep original Slack mrkdwn")
 @click.option("--since", "since", default=None, metavar="TS",
               help="Slack: only replies posted after this message ts (the 'Last Message ts' of an earlier export)")
+@click.option("--only", "only", type=click.Choice(["comments"]), default=None,
+              help="Confluence/Jira: export only this part (comments: header + comments, no body)")
 @click.option("-r", "--recursive/--no-recursive", default=False, show_default=True,
               help="Confluence: also export child pages (requires -o or -O)")
 @click.option("-i", "--include-images/--no-include-images", default=False, show_default=True,
@@ -80,6 +82,7 @@ def main(
     download_files: bool,
     raw: bool,
     since: str | None,
+    only: str | None,
     recursive: bool,
     include_images: bool,
     all_attachments: bool,
@@ -139,6 +142,13 @@ def main(
     if since is not None and source is not Source.SLACK_THREAD:
         raise click.UsageError("--since only applies to Slack thread URLs")
 
+    only_comments = only == "comments"
+    if only_comments:
+        _validate_only_comments(
+            source=source, recursive=recursive, include_images=include_images,
+            all_attachments=all_attachments,
+        )
+
     output_str = str(output) if output else None
 
     # Options every dumper accepts; source-specific flags are validated and
@@ -168,6 +178,7 @@ def main(
             "include_images": include_images,
             "all_attachments": all_attachments,
             "debug": debug,
+            "only_comments": only_comments,
         }
     elif source is Source.GITHUB_PR:
         extra_kwargs = {
@@ -187,6 +198,7 @@ def main(
             "include_images": include_images,
             "all_attachments": all_attachments,
             "debug": debug,
+            "only_comments": only_comments,
         }
     else:
         _validate_slack_flags(
@@ -221,7 +233,7 @@ def main(
     # else.  Elsewhere -o accepts "file or directory": an existing directory
     # gets the default filename appended, instead of failing at rename time
     # with "Is a directory".
-    writes_directory = source is Source.CONFLUENCE and not (
+    writes_directory = source is Source.CONFLUENCE and not only_comments and not (
         output is not None and confluence_output_is_file(output, recursive)
     )
 
@@ -291,6 +303,20 @@ def _emit_shell_alias(shell: str | None) -> None:
     # bash and fish still treat a bare & as backgrounding, which no alias can
     # fix — say so instead of emitting a pointless alias.
     click.echo(f"# ctxd: nothing to set up for {shell}; quote URLs containing & or ?")
+
+
+def _validate_only_comments(
+    source: Source, recursive: bool, include_images: bool, all_attachments: bool,
+) -> None:
+    if source not in (Source.CONFLUENCE, Source.JIRA):
+        raise click.UsageError("--only comments applies to Confluence pages and Jira issues")
+    used = [flag for flag, on in (
+        ("-r", recursive), ("-i", include_images), ("--all-attachments", all_attachments),
+    ) if on]
+    if used:
+        raise click.UsageError(
+            f"--only comments exports no body or attachments; drop {' '.join(used)}"
+        )
 
 
 def _validate_slack_flags(
